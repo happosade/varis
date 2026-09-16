@@ -184,9 +184,9 @@ func TestScanStaging(t *testing.T) {
 
 func TestPack_SplitsIntoTargetSizedBuckets(t *testing.T) {
 	files := []FileInfo{
-		{Path: "a", Size: 40},
-		{Path: "b", Size: 40},
-		{Path: "c", Size: 40},
+		{Path: "a", Size: 30},
+		{Path: "b", Size: 30},
+		{Path: "c", Size: 30},
 	}
 
 	buckets := Pack(files, 70)
@@ -194,11 +194,11 @@ func TestPack_SplitsIntoTargetSizedBuckets(t *testing.T) {
 	if len(buckets) != 2 {
 		t.Fatalf("len(buckets) = %d, want 2", len(buckets))
 	}
-	if len(buckets[0].Files) != 1 || buckets[0].TotalSize != 40 {
-		t.Errorf("buckets[0] = %+v", buckets[0])
+	if len(buckets[0].Files) != 2 || buckets[0].TotalSize != 60 {
+		t.Errorf("buckets[0] = %+v, want 2 files totaling 60", buckets[0])
 	}
-	if len(buckets[1].Files) != 2 || buckets[1].TotalSize != 80 {
-		t.Errorf("buckets[1] = %+v", buckets[1])
+	if len(buckets[1].Files) != 1 || buckets[1].TotalSize != 30 {
+		t.Errorf("buckets[1] = %+v, want 1 file totaling 30", buckets[1])
 	}
 }
 ```

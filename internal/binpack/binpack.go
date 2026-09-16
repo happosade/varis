@@ -50,28 +50,17 @@ func ScanStaging(root string) ([]FileInfo, error) {
 	return files, nil
 }
 
-// Pack buckets files sequentially, never splitting a file across buckets.
-// It treats the files as one continuous byte stream and cuts a new bucket
-// whenever a file's cumulative end offset crosses into the next
-// targetSize-wide band. Because files aren't split, a bucket's TotalSize is
-// not strictly capped at targetSize: a run of files that all land in the
-// same band before the next one lands in the following band can leave a
-// bucket over budget, and a single file larger than targetSize gets its own
-// oversized bucket — either still gets burned, it just won't necessarily
-// share a disc's capacity cleanly.
+// Pack greedily buckets files so each bucket's TotalSize stays at or under
+// targetSize. A single file larger than targetSize gets its own oversized
+// bucket — it still gets burned, it just won't share a disc with anything.
 func Pack(files []FileInfo, targetSize int64) []Bucket {
 	var buckets []Bucket
 	var current Bucket
-	var cumulative int64
-	band := int64(-1)
 	for _, f := range files {
-		cumulative += f.Size
-		fileBand := (cumulative - 1) / targetSize
-		if band != -1 && fileBand != band && len(current.Files) > 0 {
+		if current.TotalSize > 0 && current.TotalSize+f.Size > targetSize {
 			buckets = append(buckets, current)
 			current = Bucket{}
 		}
-		band = fileBand
 		current.Files = append(current.Files, f)
 		current.TotalSize += f.Size
 	}
