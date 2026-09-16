@@ -6,7 +6,7 @@
 
 **Architecture:** `internal/retrieve.Manager` mirrors `burn.Manager`'s shape (one active job, mutex-protected) but consumes discs instead of producing them: it reads a disc's TOC/tar/parity index via `xorriso -indev` (works against both `/dev/sr0` and a plain ISO file, which reconstruction exploits), verifies with `par2verify`, and extracts the requested file with a small pure-Go tar reader. `internal/web` is a thin `net/http` + `html/template` layer with no business logic of its own — every handler just calls into `burn.Manager`/`retrieve.Manager`/`db`.
 
-**Tech Stack:** Go 1.23 stdlib `net/http` (method+wildcard patterns), `html/template` with `embed.FS`, HTMX (loaded from `cdnjs.cloudflare.com` — see Task 5), `github.com/skip2/go-qrcode` for the disk cover's QR code (no native/stdlib QR encoder exists, so this one small dependency is justified).
+**Tech Stack:** Go 1.25+ stdlib `net/http` (method+wildcard patterns), `html/template` with `embed.FS`, HTMX (loaded from `cdnjs.cloudflare.com` — see Task 5), `github.com/skip2/go-qrcode` for the disk cover's QR code (no native/stdlib QR encoder exists, so this one small dependency is justified).
 
 **Depends on:** plan 00 (`db`, `execx`, `config`, `webdav`), plan 01 (`burn.Manager`, `toc.TOC`), plan 02 (`burn.Reconstructor`, grouped `DiscPlan`s).
 

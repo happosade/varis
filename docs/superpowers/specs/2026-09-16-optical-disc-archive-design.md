@@ -32,7 +32,7 @@ against both partial disc bit-rot and total disc loss.
   - `/data/retrieved` — WebDAV output for restored files.
   - `/dev/sr0` — passed through via `devices:` in compose (Linux only).
 - **No authentication.** Trusted home LAN, single user.
-- **Go version:** latest stable (1.23+).
+- **Go version:** latest stable (1.25+).
 - **Routing:** stdlib `net/http` using Go 1.22+ method+wildcard patterns
   (e.g. `mux.HandleFunc("POST /burn", ...)`). No chi/gorilla — the route
   count (~10) doesn't justify a router dependency.

@@ -50,12 +50,12 @@ Run:
 ```bash
 go mod init varis
 ```
-Expected: creates `go.mod` with `module varis` and a `go 1.23` (or newer installed) directive.
+Expected: creates `go.mod` with `module varis` and a `go 1.25` (or newer installed) directive.
 
 - [ ] **Step 2: Write the Dockerfile**
 
 ```dockerfile
-FROM golang:1.23-bookworm AS build
+FROM golang:1.25-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum* ./
 RUN go mod download

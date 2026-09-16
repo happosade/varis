@@ -6,7 +6,7 @@
 
 **Architecture:** No new packages. This plan only adds guard checks to two existing handlers, one integration test that composes `burn.Manager` and `retrieve.Manager` with a shared fake "shelf" standing in for physical media, and project documentation.
 
-**Tech Stack:** Go 1.23 stdlib only.
+**Tech Stack:** Go 1.25+ stdlib only.
 
 **Depends on:** plans 00–03 (uses every package).
 

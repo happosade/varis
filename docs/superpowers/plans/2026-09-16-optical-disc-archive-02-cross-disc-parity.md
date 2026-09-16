@@ -6,7 +6,7 @@
 
 **Architecture:** Extends the `burn` package from plan 01 — `planJob` grows a grouping step, and a new `xordisk` package computes the parity image. Burning the parity disc reuses plan 01's `runDisc`/state machine unchanged (a parity disc is "just" a disc whose bytes come from XOR instead of a tar). Reconstruction is a separate, `Manager`-driven flow that reads every other disc in a group one at a time.
 
-**Tech Stack:** Go 1.23 stdlib only (`bytes`, no new dependencies).
+**Tech Stack:** Go 1.25+ stdlib only (`bytes`, no new dependencies).
 
 **Depends on:** `docs/superpowers/plans/2026-09-16-optical-disc-archive-01-burn-pipeline.md` (extends `planJob`, `DiscPlan`, `Manager`, `runDisc`; reuses `Cataloger`, `execx.Executor`).
 
