@@ -201,6 +201,23 @@ func TestPack_SplitsIntoTargetSizedBuckets(t *testing.T) {
 		t.Errorf("buckets[1] = %+v, want 1 file totaling 30", buckets[1])
 	}
 }
+
+func TestPack_OversizedFileGetsOwnBucket(t *testing.T) {
+	files := []FileInfo{
+		{Path: "small", Size: 10},
+		{Path: "huge", Size: 100}, // exceeds targetSize
+		{Path: "small2", Size: 10},
+	}
+
+	buckets := Pack(files, 70)
+
+	if len(buckets) != 3 {
+		t.Fatalf("len(buckets) = %d, want 3", len(buckets))
+	}
+	if len(buckets[1].Files) != 1 || buckets[1].Files[0].Path != "huge" || buckets[1].TotalSize != 100 {
+		t.Errorf("buckets[1] = %+v, want a lone 'huge' file totaling 100", buckets[1])
+	}
+}
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
