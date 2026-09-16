@@ -29,3 +29,18 @@ func TestFakeExecutor_RecordsCallsAndReturnsConfiguredResult(t *testing.T) {
 		t.Errorf("Calls() = %+v", calls)
 	}
 }
+
+func TestFakeExecutor_FuncOverridesResults(t *testing.T) {
+	fake := &FakeExecutor{
+		Results: map[string]Result{"xorriso": {Output: []byte("ignored")}},
+		Funcs: map[string]func(args []string) Result{
+			"xorriso": func(args []string) Result {
+				return Result{Output: []byte("from func")}
+			},
+		},
+	}
+	out, err := fake.Run(context.Background(), "xorriso", "-as", "mkisofs")
+	if err != nil || string(out) != "from func" {
+		t.Fatalf("Run = %q, %v", out, err)
+	}
+}

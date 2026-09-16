@@ -15,10 +15,13 @@ type Result struct {
 	Err    error
 }
 
-// FakeExecutor records every call and returns the Result configured for
-// that command name (zero value: nil output, nil error).
+// FakeExecutor records every call and returns a configured Result: from
+// Funcs (for tests that need to simulate a command's filesystem side
+// effects, like xorriso writing an ISO file) if present for that command
+// name, otherwise from Results (zero value: nil output, nil error).
 type FakeExecutor struct {
 	Results map[string]Result
+	Funcs   map[string]func(args []string) Result
 
 	mu    sync.Mutex
 	calls []Call
@@ -29,6 +32,10 @@ func (f *FakeExecutor) Run(ctx context.Context, name string, args ...string) ([]
 	f.calls = append(f.calls, Call{Name: name, Args: args})
 	f.mu.Unlock()
 
+	if fn, ok := f.Funcs[name]; ok {
+		r := fn(args)
+		return r.Output, r.Err
+	}
 	r := f.Results[name]
 	return r.Output, r.Err
 }
