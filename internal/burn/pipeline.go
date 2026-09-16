@@ -94,12 +94,19 @@ func NewManager(cat Cataloger, ex execx.Executor, stagingDir, spoolDir, device s
 	}
 }
 
-// Current returns the in-flight (or just-finished/failed) job, or nil if
-// none has been started yet.
+// Current returns a snapshot of the in-flight (or just-finished/failed)
+// job, or nil if none has been started yet. It returns a value copy (not
+// the live job) so callers never race with runDisc's concurrent state
+// updates; sharing Plans' backing array across the copy is safe because
+// nothing mutates Plans after Start creates it.
 func (m *Manager) Current() *Job {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.job
+	if m.job == nil {
+		return nil
+	}
+	jobCopy := *m.job
+	return &jobCopy
 }
 
 func diskFreeBytes(path string) (uint64, error) {
@@ -180,10 +187,15 @@ func (m *Manager) Start(ctx context.Context, opts Options) error {
 func (m *Manager) ContinueNextDisc(ctx context.Context) error {
 	m.mu.Lock()
 	job := m.job
-	m.mu.Unlock()
 	if job == nil || job.State != StateAwaitingDisc {
+		m.mu.Unlock()
 		return fmt.Errorf("no disc awaiting burn")
 	}
+	// Claim the job atomically in the same critical section as the check
+	// above, so two concurrent callers can't both observe AwaitingDisc and
+	// both enter runDisc for the same disc plan.
+	job.State = StatePacking
+	m.mu.Unlock()
 
 	plan := job.Plans[job.CurrentIndex]
 	if err := m.runDisc(ctx, job, plan); err != nil {

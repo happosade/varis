@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"varis/internal/db"
 	"varis/internal/execx"
@@ -200,5 +201,114 @@ func TestManager_RejectsWhenNotEnoughFreeSpace(t *testing.T) {
 	err := mgr.Start(context.Background(), opts)
 	if err == nil || !strings.Contains(err.Error(), "not enough free space") {
 		t.Fatalf("Start error = %v, want a free-space error", err)
+	}
+}
+
+// TestManager_Current_SafeForConcurrentReadsDuringBurn is a regression test
+// for a data race: Current() used to return the live *Job pointer, which
+// concurrent callers read (.State/.CurrentIndex/.Err) without a lock while
+// runDisc's setState mutated it under m.mu. Run with -race: it must not
+// report a race. A slow step gives concurrent Current() calls a real chance
+// to overlap with the in-flight state mutations.
+func TestManager_Current_SafeForConcurrentReadsDuringBurn(t *testing.T) {
+	staging := t.TempDir()
+	spool := t.TempDir()
+	device := filepath.Join(t.TempDir(), "device")
+	writeStagingFile(t, staging, "photo.jpg", "some bytes")
+
+	cat := newFakeCataloger()
+	ex := fakeExecutorForHappyPath(device)
+	slowXorriso := ex.Funcs["xorriso"]
+	ex.Funcs["xorriso"] = func(args []string) execx.Result {
+		time.Sleep(20 * time.Millisecond)
+		return slowXorriso(args)
+	}
+	mgr := NewManager(cat, ex, staging, spool, device)
+	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
+
+	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}
+	if err := mgr.Start(context.Background(), opts); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- mgr.ContinueNextDisc(context.Background())
+	}()
+
+	for i := 0; i < 100; i++ {
+		job := mgr.Current()
+		if job != nil {
+			_ = job.State
+			_ = job.CurrentIndex
+			_ = job.Err
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	if err := <-done; err != nil {
+		t.Fatalf("ContinueNextDisc: %v", err)
+	}
+	if mgr.Current().State != StateDone {
+		t.Fatalf("State = %s, want DONE", mgr.Current().State)
+	}
+}
+
+// TestManager_ContinueNextDisc_ConcurrentCallsRunExactlyOnce is a regression
+// test for a TOCTOU race: ContinueNextDisc used to check job.State outside
+// the lock and only transition state deep inside runDisc, leaving a window
+// where two concurrent callers could both observe AWAITING_DISC and both
+// burn the same disc plan. Now the check-and-claim happens atomically, so
+// exactly one of two simultaneous callers should succeed and exactly one
+// wodim (burn) call should happen.
+func TestManager_ContinueNextDisc_ConcurrentCallsRunExactlyOnce(t *testing.T) {
+	staging := t.TempDir()
+	spool := t.TempDir()
+	device := filepath.Join(t.TempDir(), "device")
+	writeStagingFile(t, staging, "photo.jpg", "some bytes")
+
+	cat := newFakeCataloger()
+	ex := fakeExecutorForHappyPath(device)
+	mgr := NewManager(cat, ex, staging, spool, device)
+	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
+
+	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}
+	if err := mgr.Start(context.Background(), opts); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	wg.Add(2)
+	for i := range errs {
+		i := i
+		go func() {
+			defer wg.Done()
+			errs[i] = mgr.ContinueNextDisc(context.Background())
+		}()
+	}
+	wg.Wait()
+
+	successes := 0
+	for _, err := range errs {
+		if err == nil {
+			successes++
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("successes = %d, want exactly 1 (errs=%v)", successes, errs)
+	}
+
+	wodimCalls := 0
+	for _, c := range ex.Calls() {
+		if c.Name == "wodim" {
+			wodimCalls++
+		}
+	}
+	if wodimCalls != 1 {
+		t.Fatalf("wodim called %d times, want exactly 1 (a TOCTOU race would double-burn the same disc)", wodimCalls)
+	}
+	if len(cat.Disks) != 1 {
+		t.Fatalf("Disks = %+v, want exactly 1", cat.Disks)
 	}
 }
