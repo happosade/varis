@@ -241,20 +241,23 @@ func (m *Manager) runDisc(ctx context.Context, job *Job, plan DiscPlan) error {
 		return fmt.Errorf("runDisc: role %q not supported (cross-disc parity discs are burned via plan 02's extension)", plan.Role)
 	}
 
-	free, err := m.freeSpace(m.spoolDir)
-	if err != nil {
-		return fmt.Errorf("checking free space: %w", err)
-	}
-	if free < uint64(job.Options.CapacityBytes)*2 {
-		return fmt.Errorf("not enough free space in spool dir: need ~%d bytes, have %d", job.Options.CapacityBytes*2, free)
-	}
-
 	tarPath := filepath.Join(m.spoolDir, plan.DiskID+".tar")
 	tocPath := filepath.Join(m.spoolDir, plan.DiskID+".toc.json")
 	isoPath := filepath.Join(m.spoolDir, plan.DiskID+".iso")
 	isoDir := filepath.Join(m.spoolDir, plan.DiskID+"-src")
 	if err := removeStaleArtifacts(tarPath, tarPath+".par2", tocPath, isoPath, isoDir); err != nil {
 		return fmt.Errorf("clearing stale artifacts from a prior attempt: %w", err)
+	}
+
+	// Checked after clearing stale artifacts so a prior failed attempt's
+	// leftovers (about to be reclaimed above) don't cause a spurious
+	// "not enough free space" failure on retry.
+	free, err := m.freeSpace(m.spoolDir)
+	if err != nil {
+		return fmt.Errorf("checking free space: %w", err)
+	}
+	if free < uint64(job.Options.CapacityBytes)*2 {
+		return fmt.Errorf("not enough free space in spool dir: need ~%d bytes, have %d", job.Options.CapacityBytes*2, free)
 	}
 
 	m.setState(job, StatePacking)
