@@ -6,7 +6,7 @@
 
 **Architecture:** A single Go binary (`cmd/archive-core`) that on startup connects to Postgres, applies the schema, seeds default media types, mounts two WebDAV shares over local directories, and serves a health check. This plan produces no burn/retrieval logic yet — just the foundation later plans build on.
 
-**Tech Stack:** Go 1.23, `github.com/jackc/pgx/v5` (Postgres driver, no ORM), `golang.org/x/net/webdav`, Postgres 16, Docker Compose.
+**Tech Stack:** Go 1.25+, `github.com/jackc/pgx/v5` (Postgres driver, no ORM), `golang.org/x/net/webdav`, Postgres 16, Docker Compose.
 
 **Depends on:** nothing — this is the first plan. Later plans (01–04) depend on the package layout and types defined here.
 
