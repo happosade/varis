@@ -6,7 +6,7 @@
 
 **Architecture:** A `burn.Manager` holds at most one `Job` (single-drive reality), driven step by step by a `Cataloger` interface (persists disc/file rows — real impl wraps Postgres, tests use an in-memory fake) and an `execx.Executor` (runs `par2create`/`xorriso`/`wodim` — tests use `execx.FakeExecutor`). Cross-disc parity (spec §5) is deliberately **not** handled here — plan 02 extends this package's planning and disc-role handling. This plan only produces "data" role discs.
 
-**Tech Stack:** Go 1.25+ stdlib (`archive/tar`, `compress/gzip`, `crypto/sha256`, `syscall` for free-space checks), the `execx` and `db` packages from plan 00.
+**Tech Stack:** Go 1.26+ stdlib (`archive/tar`, `compress/gzip`, `crypto/sha256`, `syscall` for free-space checks), the `execx` and `db` packages from plan 00.
 
 **Depends on:** `docs/superpowers/plans/2026-09-16-optical-disc-archive-00-overview.md` (uses `execx.Executor`/`FakeExecutor`, `db.Disk`, `db.FileRecord`, `db.NextDiskID`, `db.InsertDisk`, `db.InsertFile`).
 
