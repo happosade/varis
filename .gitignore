@@ -1,0 +1,4 @@
+.worktrees/
+data/
+*.iso
+/archive-core
