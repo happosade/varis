@@ -1,0 +1,27 @@
+services:
+  archive-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: varis
+      POSTGRES_PASSWORD: varis
+      POSTGRES_DB: varis
+    volumes:
+      - archive-db-data:/var/lib/postgresql/data
+
+  archive-core:
+    build: .
+    depends_on:
+      - archive-db
+    environment:
+      DATABASE_URL: postgres://varis:varis@archive-db:5432/varis?sslmode=disable
+    ports:
+      - "8080:8080"
+    devices:
+      - "/dev/sr0:/dev/sr0"
+    volumes:
+      - ./data/staging:/data/staging
+      - ./data/spool:/data/spool
+      - ./data/retrieved:/data/retrieved
+
+volumes:
+  archive-db-data:
