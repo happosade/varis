@@ -241,8 +241,23 @@ func (m *Manager) runDisc(ctx context.Context, job *Job, plan DiscPlan) error {
 		return fmt.Errorf("runDisc: role %q not supported (cross-disc parity discs are burned via plan 02's extension)", plan.Role)
 	}
 
-	m.setState(job, StatePacking)
+	free, err := m.freeSpace(m.spoolDir)
+	if err != nil {
+		return fmt.Errorf("checking free space: %w", err)
+	}
+	if free < uint64(job.Options.CapacityBytes)*2 {
+		return fmt.Errorf("not enough free space in spool dir: need ~%d bytes, have %d", job.Options.CapacityBytes*2, free)
+	}
+
 	tarPath := filepath.Join(m.spoolDir, plan.DiskID+".tar")
+	tocPath := filepath.Join(m.spoolDir, plan.DiskID+".toc.json")
+	isoPath := filepath.Join(m.spoolDir, plan.DiskID+".iso")
+	isoDir := filepath.Join(m.spoolDir, plan.DiskID+"-src")
+	if err := removeStaleArtifacts(tarPath, tarPath+".par2", tocPath, isoPath, isoDir); err != nil {
+		return fmt.Errorf("clearing stale artifacts from a prior attempt: %w", err)
+	}
+
+	m.setState(job, StatePacking)
 	if err := WriteTar(m.stagingDir, plan.Bucket, tarPath, job.Options.Compress); err != nil {
 		return fmt.Errorf("packing: %w", err)
 	}
@@ -266,20 +281,17 @@ func (m *Manager) runDisc(ctx context.Context, job *Job, plan DiscPlan) error {
 	if err != nil {
 		return fmt.Errorf("toc: %w", err)
 	}
-	tocPath := filepath.Join(m.spoolDir, plan.DiskID+".toc.json")
 	if err := os.WriteFile(tocPath, tocBytes, 0o644); err != nil {
 		return fmt.Errorf("writing toc: %w", err)
 	}
 
 	m.setState(job, StateISO)
-	isoDir := filepath.Join(m.spoolDir, plan.DiskID+"-src")
 	if err := os.MkdirAll(isoDir, 0o755); err != nil {
 		return fmt.Errorf("iso staging dir: %w", err)
 	}
 	if err := movePathsInto(isoDir, tarPath, tocPath, tarPath+".par2"); err != nil {
 		return fmt.Errorf("staging iso contents: %w", err)
 	}
-	isoPath := filepath.Join(m.spoolDir, plan.DiskID+".iso")
 	if err := BuildISO(ctx, m.ex, isoDir, isoPath); err != nil {
 		return fmt.Errorf("iso: %w", err)
 	}
@@ -300,6 +312,21 @@ func (m *Manager) runDisc(ctx context.Context, job *Job, plan DiscPlan) error {
 
 	if err := m.commitDisc(ctx, job, plan, isoHash); err != nil {
 		return fmt.Errorf("db commit: %w", err)
+	}
+	return nil
+}
+
+// removeStaleArtifacts clears any spool files/dirs left over from a prior,
+// partially-completed attempt at the same DiskID (e.g. a failure mid-PARITY
+// leaves tarPath+".par2" behind before the ISO-stage move). Real par2create
+// refuses to run against a data file that already has recovery files, so
+// retries must start from a clean slate regardless of where the previous
+// attempt failed.
+func removeStaleArtifacts(paths ...string) error {
+	for _, p := range paths {
+		if err := os.RemoveAll(p); err != nil {
+			return err
+		}
 	}
 	return nil
 }

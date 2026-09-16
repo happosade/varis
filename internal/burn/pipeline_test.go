@@ -128,6 +128,66 @@ func TestManager_HappyPath_SingleDisc(t *testing.T) {
 	}
 }
 
+func TestManager_MultiDiscJob_BurnsSequentially(t *testing.T) {
+	staging := t.TempDir()
+	spool := t.TempDir()
+	device := filepath.Join(t.TempDir(), "device")
+	// CapacityBytes=1000, ParityPercent=10 -> target data size = 909 bytes.
+	// Two 600-byte files can't share a bucket (600+600 > 909), so binpack.Pack
+	// splits them into two buckets/discs.
+	writeStagingFile(t, staging, "a.bin", strings.Repeat("a", 600))
+	writeStagingFile(t, staging, "b.bin", strings.Repeat("b", 600))
+
+	cat := newFakeCataloger()
+	ex := fakeExecutorForHappyPath(device)
+	mgr := NewManager(cat, ex, staging, spool, device)
+	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
+
+	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}
+	if err := mgr.Start(context.Background(), opts); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if got := len(mgr.Current().Plans); got != 2 {
+		t.Fatalf("len(Plans) = %d, want 2", got)
+	}
+
+	// First disc: should land back on AWAITING_DISC, not DONE.
+	if err := mgr.ContinueNextDisc(context.Background()); err != nil {
+		t.Fatalf("ContinueNextDisc (disc 1): %v", err)
+	}
+	job := mgr.Current()
+	if job.State != StateAwaitingDisc {
+		t.Fatalf("after disc 1: State = %s, want AWAITING_DISC (err=%v)", job.State, job.Err)
+	}
+	if job.CurrentIndex != 1 {
+		t.Fatalf("after disc 1: CurrentIndex = %d, want 1", job.CurrentIndex)
+	}
+
+	// Second (last) disc: only now should it reach DONE.
+	if err := mgr.ContinueNextDisc(context.Background()); err != nil {
+		t.Fatalf("ContinueNextDisc (disc 2): %v", err)
+	}
+	job = mgr.Current()
+	if job.State != StateDone {
+		t.Fatalf("after disc 2: State = %s, want DONE (err=%v)", job.State, job.Err)
+	}
+	if job.CurrentIndex != 2 {
+		t.Fatalf("after disc 2: CurrentIndex = %d, want 2", job.CurrentIndex)
+	}
+
+	if len(cat.Disks) != 2 || cat.Disks[0].ID != "BD:0001" || cat.Disks[1].ID != "BD:0002" {
+		t.Errorf("Disks = %+v", cat.Disks)
+	}
+	if len(cat.Files) != 2 {
+		t.Errorf("Files = %+v", cat.Files)
+	}
+	for _, name := range []string{"a.bin", "b.bin"} {
+		if _, err := os.Stat(filepath.Join(staging, name)); !os.IsNotExist(err) {
+			t.Errorf("expected %s to be removed from staging after burning", name)
+		}
+	}
+}
+
 func TestManager_FailedStepLeavesStagingUntouchedAndAllowsRetry(t *testing.T) {
 	staging := t.TempDir()
 	spool := t.TempDir()
