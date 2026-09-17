@@ -40,7 +40,7 @@ Inside, you'll find <code>staging/</code>, <code>retrieved/</code>, and
 {{range .}}
   <details open>
     {{if .Name}}
-    <summary><label><input type="checkbox" name="path" value="{{.Name}}/"> {{.Name}}/</label></summary>
+    <summary><label onclick="event.stopPropagation()"><input type="checkbox" name="path" value="{{.Name}}/"> {{.Name}}/</label></summary>
     {{else}}
     <summary>(root)</summary>
     {{end}}
