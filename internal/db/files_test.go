@@ -97,6 +97,18 @@ func TestInsertFile_NilTagsDefaultToEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InsertFile with nil Tags: %v", err)
 	}
+
+	var fileID string
+	if err := pool.QueryRow(ctx, `SELECT id FROM files WHERE disk_id = $1`, id).Scan(&fileID); err != nil {
+		t.Fatalf("looking up inserted file id: %v", err)
+	}
+	got, err := GetFile(ctx, pool, fileID)
+	if err != nil {
+		t.Fatalf("GetFile: %v", err)
+	}
+	if len(got.Tags) != 0 {
+		t.Errorf("GetFile.Tags = %v, want empty", got.Tags)
+	}
 }
 
 func TestSearchFiles_MatchesTagsAndDescription(t *testing.T) {
@@ -112,19 +124,34 @@ func TestSearchFiles_MatchesTagsAndDescription(t *testing.T) {
 	if err := InsertDisk(ctx, pool, Disk{ID: id, MediaType: "BD-R", ParityPercent: 10, Role: "data"}); err != nil {
 		t.Fatalf("InsertDisk: %v", err)
 	}
+	// The search term folds in the freshly-allocated disk id so it's
+	// unique to this run — a fixed term would accumulate one
+	// permanently-matching row per test run in the shared dev DB and
+	// eventually saturate SearchFiles' LIMIT 50 with old leftovers.
+	tag := "familyvideos-" + id
 	err = InsertFile(ctx, pool, FileRecord{
 		DiskID:       id,
 		OriginalPath: "IMG_00421.jpg",
 		SizeBytes:    1,
-		Tags:         []string{"family videos 2019"},
+		Tags:         []string{tag},
+	})
+	if err != nil {
+		t.Fatalf("InsertFile: %v", err)
+	}
+	descTerm := "roadtrip-" + id
+	err = InsertFile(ctx, pool, FileRecord{
+		DiskID:       id,
+		OriginalPath: "IMG_00422.jpg",
+		SizeBytes:    1,
+		Description:  "a note about a " + descTerm,
 	})
 	if err != nil {
 		t.Fatalf("InsertFile: %v", err)
 	}
 
-	results, err := SearchFiles(ctx, pool, "family videos 2019")
+	results, err := SearchFiles(ctx, pool, tag)
 	if err != nil {
-		t.Fatalf("SearchFiles: %v", err)
+		t.Fatalf("SearchFiles(tag): %v", err)
 	}
 	found := false
 	for _, f := range results {
@@ -134,6 +161,20 @@ func TestSearchFiles_MatchesTagsAndDescription(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected SearchFiles to match by tag even though the tag doesn't appear in the filename")
+	}
+
+	results, err = SearchFiles(ctx, pool, descTerm)
+	if err != nil {
+		t.Fatalf("SearchFiles(description): %v", err)
+	}
+	found = false
+	for _, f := range results {
+		if f.OriginalPath == "IMG_00422.jpg" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected SearchFiles to match by description even though the term doesn't appear in the filename or tags")
 	}
 }
 

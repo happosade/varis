@@ -45,13 +45,24 @@ func GetFile(ctx context.Context, pool *pgxpool.Pool, id string) (FileRecord, er
 	return f, err
 }
 
+// SearchFiles matches original_path, description, and tags. This is a
+// deliberate full scan, not an indexed lookup: idx_files_tags is a GIN
+// array_ops index, which serves containment queries (tags @> ARRAY[...])
+// but can't accelerate a substring match against tag text, so tags are
+// matched via a plain ILIKE against the joined tag text instead of the
+// index. Acceptable at this project's single-user, tens-of-thousands-of
+// -files scale (see design spec §7); revisit if that changes.
 func SearchFiles(ctx context.Context, pool *pgxpool.Pool, query string) ([]FileRecord, error) {
 	rows, err := pool.Query(ctx,
 		`SELECT id, disk_id, original_path, size_bytes, file_hash, tags, description FROM files
 		 WHERE original_path ILIKE '%' || $1 || '%'
 		    OR description ILIKE '%' || $1 || '%'
-		    OR EXISTS (SELECT 1 FROM unnest(tags) t WHERE t ILIKE '%' || $1 || '%')
-		 ORDER BY similarity(original_path, $1) DESC LIMIT 50`, query)
+		    OR array_to_string(tags, ' ') ILIKE '%' || $1 || '%'
+		 ORDER BY GREATEST(
+		     similarity(original_path, $1),
+		     similarity(description, $1),
+		     similarity(array_to_string(tags, ' '), $1)
+		 ) DESC LIMIT 50`, query)
 	if err != nil {
 		return nil, err
 	}
