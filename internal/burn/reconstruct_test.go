@@ -131,5 +131,24 @@ func TestReadRawImage_CopiesExactlySizeBytes(t *testing.T) {
 	}
 }
 
+func TestReadRawImage_ToleratesSourceShorterThanRequestedSize(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "device")
+	if err := os.WriteFile(src, bytes.Repeat([]byte{0x42}, 500), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "out.img")
+
+	if err := ReadRawImage(src, dest, 1000); err != nil {
+		t.Fatalf("ReadRawImage: %v", err)
+	}
+	data, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 500 {
+		t.Fatalf("len(data) = %d, want 500", len(data))
+	}
+}
+
 func strPtr(s string) *string { return &s }
 func intPtr(i int) *int       { return &i }
