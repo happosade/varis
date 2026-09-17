@@ -2,7 +2,10 @@ package db
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -55,5 +58,8 @@ func GetMediaTypeCapacity(ctx context.Context, pool *pgxpool.Pool, name string) 
 	var capacity int64
 	err := pool.QueryRow(ctx,
 		`SELECT capacity_bytes FROM media_types WHERE name = $1`, name).Scan(&capacity)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, fmt.Errorf("media type %q not found", name)
+	}
 	return capacity, err
 }
