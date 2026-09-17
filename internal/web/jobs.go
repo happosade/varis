@@ -1,11 +1,13 @@
 package web
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
 	"varis/internal/burn"
 	"varis/internal/db"
+	"varis/internal/retrieve"
 )
 
 // jobView adapts *burn.Job to what jobs.html needs (1-based disc index,
@@ -46,6 +48,10 @@ func jobViewFromJob(job *burn.Job) *jobView {
 func (s *Server) startBurn(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if rj := s.retrieveMgr.Current(); rj != nil && rj.State != retrieve.StateDone && rj.State != retrieve.StateFailed {
+		fmt.Fprintf(w, `<p class="error">drive busy: a retrieval is in progress (%s)</p>`, rj.State)
 		return
 	}
 	mediaType := r.FormValue("media_type")

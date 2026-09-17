@@ -2,8 +2,10 @@ package web
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
+	"varis/internal/burn"
 	"varis/internal/db"
 	"varis/internal/retrieve"
 )
@@ -29,6 +31,10 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 func (s *Server) startRetrieve(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if bj := s.burnMgr.Current(); bj != nil && bj.State != burn.StateDone && bj.State != burn.StateFailed {
+		http.Error(w, fmt.Sprintf("drive busy: a burn is in progress (%s)", bj.State), http.StatusConflict)
 		return
 	}
 	fileID := r.FormValue("file_id")
