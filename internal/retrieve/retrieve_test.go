@@ -84,7 +84,7 @@ func TestManager_ReadDisk_HappyPath(t *testing.T) {
 		"file1": {ID: "file1", DiskID: "BD:0001", OriginalPath: "photo.jpg"},
 	}}
 
-	mgr := NewManager(cat, ex, retrievedDir, scratchDir, device)
+	mgr := NewManager(cat, ex, retrievedDir, scratchDir, device, t.TempDir())
 	if err := mgr.Start(context.Background(), "file1"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestManager_ReadDisk_WrongDiscRejected(t *testing.T) {
 		"file1": {ID: "file1", DiskID: "BD:0001", OriginalPath: "photo.jpg"},
 	}}
 
-	mgr := NewManager(cat, ex, retrievedDir, scratchDir, device)
+	mgr := NewManager(cat, ex, retrievedDir, scratchDir, device, t.TempDir())
 	if err := mgr.Start(context.Background(), "file1"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestManager_ReadDisk_FileNotInTarRejected(t *testing.T) {
 		"file1": {ID: "file1", DiskID: "BD:0001", OriginalPath: "photo.jpg"},
 	}}
 
-	mgr := NewManager(cat, ex, retrievedDir, scratchDir, device)
+	mgr := NewManager(cat, ex, retrievedDir, scratchDir, device, t.TempDir())
 	if err := mgr.Start(context.Background(), "file1"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestManager_ReconstructionFlow_HappyPath(t *testing.T) {
 		"/BD:0001.tar.par2":  []byte("index"),
 	})
 
-	mgr := NewManager(cat, ex, retrievedDir, scratchDir, device)
+	mgr := NewManager(cat, ex, retrievedDir, scratchDir, device, t.TempDir())
 	if err := mgr.Start(context.Background(), "file1"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestManager_ReadReconstructionDisc_UnknownMemberReverts(t *testing.T) {
 	}
 	ex := fakeDiscExecutor(nil) // ReadDisk against the device always fails here
 
-	mgr := NewManager(cat, ex, retrievedDir, scratchDir, device)
+	mgr := NewManager(cat, ex, retrievedDir, scratchDir, device, t.TempDir())
 	if err := mgr.Start(context.Background(), "file1"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -365,6 +365,121 @@ func TestManager_ReadReconstructionDisc_UnknownMemberReverts(t *testing.T) {
 }
 
 func intPtr(i int) *int { return &i }
+
+func TestManager_ReadDisk_DryRunDisc_ReadsFromDryRunPath(t *testing.T) {
+	retrievedDir := t.TempDir()
+	scratchDir := t.TempDir()
+	dryRunDir := t.TempDir()
+	device := filepath.Join(t.TempDir(), "device") // never touched in this test
+
+	dryRunPath := filepath.Join(dryRunDir, "BD:0001.iso")
+	tocBytes, _ := toc.TOC{DiskID: "BD:0001", Compressed: false}.Marshal()
+	tarPath := filepath.Join(t.TempDir(), "src.tar")
+	writeTarFixture(t, tarPath, map[string]string{"photo.jpg": "bytes"})
+	tarBytes, err := os.ReadFile(tarPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cat := fakeCatalog{
+		files: map[string]db.FileRecord{"file1": {ID: "file1", DiskID: "BD:0001", OriginalPath: "photo.jpg"}},
+		disks: map[string]db.Disk{"BD:0001": {ID: "BD:0001", MediaType: "BD-R", Role: "data", IsDryRun: true}},
+	}
+	ex := srcAwareDiscExecutor(dryRunPath, map[string][]byte{
+		"/BD:0001.toc.json": tocBytes,
+		"/BD:0001.tar":       tarBytes,
+		"/BD:0001.tar.par2":  []byte("index"),
+	})
+
+	mgr := NewManager(cat, ex, retrievedDir, scratchDir, device, dryRunDir)
+	if err := mgr.Start(context.Background(), "file1"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := mgr.ReadDisk(context.Background()); err != nil {
+		t.Fatalf("ReadDisk: %v", err)
+	}
+	if mgr.Current().State != StateDone {
+		t.Fatalf("State = %s, want DONE (err=%v)", mgr.Current().State, mgr.Current().Err)
+	}
+	got, err := os.ReadFile(filepath.Join(retrievedDir, "photo.jpg"))
+	if err != nil {
+		t.Fatalf("reading retrieved file: %v", err)
+	}
+	if string(got) != "bytes" {
+		t.Errorf("got %q, want %q", got, "bytes")
+	}
+}
+
+func TestManager_ReadReconstructionDisc_DryRunMemberReadsFromDryRunPath(t *testing.T) {
+	retrievedDir := t.TempDir()
+	scratchDir := t.TempDir()
+	dryRunDir := t.TempDir()
+	device := filepath.Join(t.TempDir(), "device")
+
+	groupID := "g1"
+	cat := fakeCatalog{
+		files: map[string]db.FileRecord{
+			"file1": {ID: "file1", DiskID: "BD:0001", OriginalPath: "photo.jpg"},
+		},
+		disks: map[string]db.Disk{
+			"BD:0001": {ID: "BD:0001", MediaType: "BD-R", Role: "data", GroupID: &groupID, SlotIndex: intPtr(0)},
+			"BD:0002": {ID: "BD:0002", MediaType: "BD-R", Role: "parity", GroupID: &groupID, SlotIndex: intPtr(1), IsDryRun: true},
+		},
+	}
+
+	tocBytes, _ := toc.TOC{DiskID: "BD:0001", Compressed: false}.Marshal()
+	tarPath := filepath.Join(t.TempDir(), "src.tar")
+	writeTarFixture(t, tarPath, map[string]string{"photo.jpg": "bytes"})
+	tarBytes, err := os.ReadFile(tarPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reconstructedPath := filepath.Join(scratchDir, "BD:0001.reconstructed.iso")
+	dryRunParityPath := filepath.Join(dryRunDir, "BD:0002.iso")
+	ex := srcAwareDiscExecutor(reconstructedPath, map[string][]byte{
+		"/BD:0001.toc.json": tocBytes,
+		"/BD:0001.tar":       tarBytes,
+		"/BD:0001.tar.par2":  []byte("index"),
+	})
+
+	mgr := NewManager(cat, ex, retrievedDir, scratchDir, device, dryRunDir)
+	if err := mgr.Start(context.Background(), "file1"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := os.WriteFile(device, []byte("garbage, not the real disc"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.ReadDisk(context.Background()); err == nil {
+		t.Fatal("expected ReadDisk against garbage to fail")
+	}
+	if mgr.Current().State != StateNeedsReconstruction {
+		t.Fatalf("State = %s, want NEEDS_RECONSTRUCTION", mgr.Current().State)
+	}
+	if err := mgr.StartReconstruction(context.Background()); err != nil {
+		t.Fatalf("StartReconstruction: %v", err)
+	}
+
+	// BD:0002 (the parity disc) is the only remaining member, and it's a
+	// dry-run disc: its bytes live at dryRunParityPath, not at device.
+	if err := os.WriteFile(dryRunParityPath, []byte("whatever bytes the srcAwareDiscExecutor passthrough will read"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.ReadReconstructionDisc(context.Background(), "BD:0002"); err != nil {
+		t.Fatalf("ReadReconstructionDisc: %v", err)
+	}
+
+	if mgr.Current().State != StateDone {
+		t.Fatalf("State = %s, want DONE (err=%v)", mgr.Current().State, mgr.Current().Err)
+	}
+	got, err := os.ReadFile(filepath.Join(retrievedDir, "photo.jpg"))
+	if err != nil {
+		t.Fatalf("reading retrieved file: %v", err)
+	}
+	if string(got) != "bytes" {
+		t.Errorf("got %q, want %q", got, "bytes")
+	}
+}
 
 // writeTarFixture is a tiny local helper using archive/tar directly (not
 // exported from the burn package on purpose — retrieve's tests shouldn't

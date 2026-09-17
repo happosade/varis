@@ -99,7 +99,7 @@ func TestStartBurn_RejectedWhileRetrievalInProgress(t *testing.T) {
 
 	retrieveMgr := retrieve.NewManager(stubCatalog{
 		files: map[string]db.FileRecord{"f1": {ID: "f1", DiskID: "BD:0001", OriginalPath: "a.bin"}},
-	}, &execx.FakeExecutor{}, t.TempDir(), t.TempDir(), t.TempDir()+"/device")
+	}, &execx.FakeExecutor{}, t.TempDir(), t.TempDir(), t.TempDir()+"/device", t.TempDir())
 	if err := retrieveMgr.Start(context.Background(), "f1"); err != nil {
 		t.Fatalf("retrieveMgr.Start: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestStartRetrieve_RejectedWhileBurnInProgress(t *testing.T) {
 
 	retrieveMgr := retrieve.NewManager(stubCatalog{
 		files: map[string]db.FileRecord{"f1": {ID: "f1", DiskID: "BD:0001", OriginalPath: "a.bin"}},
-	}, &execx.FakeExecutor{}, t.TempDir(), t.TempDir(), t.TempDir()+"/device")
+	}, &execx.FakeExecutor{}, t.TempDir(), t.TempDir(), t.TempDir()+"/device", t.TempDir())
 
 	s := &Server{burnMgr: burnMgr, retrieveMgr: retrieveMgr}
 	form := url.Values{"file_id": {"f1"}}

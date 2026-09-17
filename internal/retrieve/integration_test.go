@@ -314,7 +314,7 @@ func TestEndToEnd_BurnGroupLoseADiscReconstruct(t *testing.T) {
 
 	// --- Retrieve photo1.jpg: its disc is "lost" (simulate an unreadable disc). ---
 	retrievedDir := t.TempDir()
-	retrieveMgr := NewManager(store, ex, retrievedDir, scratch, device)
+	retrieveMgr := NewManager(store, ex, retrievedDir, scratch, device, t.TempDir())
 
 	var photo1ID string
 	for _, f := range store.files {

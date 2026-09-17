@@ -50,6 +50,7 @@ type Manager struct {
 	retrievedDir string
 	scratchDir   string
 	device       string
+	dryRunDir    string
 
 	mu                     sync.Mutex
 	job                    *Job
@@ -57,8 +58,8 @@ type Manager struct {
 	reconstructionCapacity int64
 }
 
-func NewManager(cat Catalog, ex execx.Executor, retrievedDir, scratchDir, device string) *Manager {
-	return &Manager{cat: cat, ex: ex, retrievedDir: retrievedDir, scratchDir: scratchDir, device: device}
+func NewManager(cat Catalog, ex execx.Executor, retrievedDir, scratchDir, device, dryRunDir string) *Manager {
+	return &Manager{cat: cat, ex: ex, retrievedDir: retrievedDir, scratchDir: scratchDir, device: device, dryRunDir: dryRunDir}
 }
 
 // Current returns a snapshot of the in-flight (or just-finished/failed)
@@ -103,7 +104,9 @@ func (m *Manager) Start(ctx context.Context, fileID string) error {
 }
 
 // ReadDisk is called once the user has inserted the disc named by the
-// current job and clicked "Read Disk".
+// current job and clicked "Read Disk" — or, for a dry-run disc, is called
+// with nothing to insert at all; its bytes are read straight from
+// dryRunDir instead of the physical device.
 func (m *Manager) ReadDisk(ctx context.Context) error {
 	m.mu.Lock()
 	job := m.job
@@ -118,7 +121,20 @@ func (m *Manager) ReadDisk(ctx context.Context) error {
 	// alone is enough to prevent double-entry.
 	job.State = StateReadingDisc
 	m.mu.Unlock()
-	return m.readFrom(ctx, job, m.device)
+
+	disk, err := m.cat.GetDisk(ctx, job.DiskID)
+	if err != nil {
+		// Unlike readFrom's own failure paths, there was no read attempt
+		// here to blame on damaged media — the catalog lookup itself
+		// failed — so this is a hard failure, not something reconstruction
+		// could ever fix.
+		return m.fail(job, err)
+	}
+	src := m.device
+	if disk.IsDryRun {
+		src = filepath.Join(m.dryRunDir, job.DiskID+".iso")
+	}
+	return m.readFrom(ctx, job, src)
 }
 
 // readFrom does the actual TOC-check + parity-verify + extract, reading
@@ -307,13 +323,17 @@ func (m *Manager) ReadReconstructionDisc(ctx context.Context, diskID string) err
 	if err != nil {
 		return m.revertToReconstructing(job, err)
 	}
+	src := m.device
+	if disk.IsDryRun {
+		src = filepath.Join(m.dryRunDir, diskID+".iso")
+	}
 
 	imagePath := filepath.Join(m.scratchDir, diskID+".img")
 	if disk.Role == "parity" {
-		if err := burn.ExtractFromDisc(ctx, m.ex, m.device, "/"+diskID+".tar", imagePath); err != nil {
+		if err := burn.ExtractFromDisc(ctx, m.ex, src, "/"+diskID+".tar", imagePath); err != nil {
 			return m.revertToReconstructing(job, err)
 		}
-	} else if err := burn.ReadRawImage(m.device, imagePath, capacity); err != nil {
+	} else if err := burn.ReadRawImage(src, imagePath, capacity); err != nil {
 		return m.revertToReconstructing(job, err)
 	}
 	data, err := os.ReadFile(imagePath)
