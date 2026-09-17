@@ -16,10 +16,12 @@ import (
 
 // FakeCataloger is an in-memory Cataloger for tests.
 type FakeCataloger struct {
-	mu    sync.Mutex
-	seq   map[string]int
-	Disks []db.Disk
-	Files []db.FileRecord
+	mu         sync.Mutex
+	seq        map[string]int
+	burnJobSeq int
+	groupSeq   int
+	Disks      []db.Disk
+	Files      []db.FileRecord
 }
 
 func newFakeCataloger() *FakeCataloger {
@@ -31,6 +33,20 @@ func (f *FakeCataloger) NextDiskID(ctx context.Context, prefix string) (string, 
 	defer f.mu.Unlock()
 	f.seq[prefix]++
 	return fmt.Sprintf("%s:%04d", prefix, f.seq[prefix]), nil
+}
+
+func (f *FakeCataloger) NewBurnJobID(ctx context.Context) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.burnJobSeq++
+	return fmt.Sprintf("burnjob-%d", f.burnJobSeq), nil
+}
+
+func (f *FakeCataloger) NextGroupID(ctx context.Context, burnJobID string, groupSize int) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.groupSeq++
+	return fmt.Sprintf("group-%d", f.groupSeq), nil
 }
 
 func (f *FakeCataloger) InsertDisk(ctx context.Context, d db.Disk) error {
@@ -311,6 +327,54 @@ func TestManager_Current_SafeForConcurrentReadsDuringBurn(t *testing.T) {
 	}
 	if mgr.Current().State != StateDone {
 		t.Fatalf("State = %s, want DONE", mgr.Current().State)
+	}
+}
+
+func TestPlanJob_GroupsDataDiscsAndAddsParityDiscs(t *testing.T) {
+	staging := t.TempDir()
+	for i := 0; i < 5; i++ {
+		writeStagingFile(t, staging, fmt.Sprintf("f%d.bin", i), strings.Repeat("x", 100))
+	}
+	cat := newFakeCataloger()
+
+	opts := Options{
+		MediaType:       "BD-R",
+		CapacityBytes:   150, // forces 5 buckets of ~100 bytes each (1 file per disc)
+		ParityPercent:   10,
+		CrossDiscParity: true,
+		GroupSize:       2,
+	}
+
+	plans, err := planJob(context.Background(), staging, opts, cat)
+	if err != nil {
+		t.Fatalf("planJob: %v", err)
+	}
+
+	var dataCount, parityCount int
+	groupIDs := map[string]bool{}
+	for _, p := range plans {
+		switch p.Role {
+		case "data":
+			dataCount++
+			if p.GroupID == "" {
+				t.Errorf("data plan %+v missing GroupID", p)
+			}
+			groupIDs[p.GroupID] = true
+		case "parity":
+			parityCount++
+		default:
+			t.Errorf("unexpected role %q", p.Role)
+		}
+	}
+	if dataCount != 5 {
+		t.Fatalf("dataCount = %d, want 5", dataCount)
+	}
+	// 5 data discs, group size 2 -> groups of [2,2,1] -> 3 parity discs.
+	if parityCount != 3 {
+		t.Fatalf("parityCount = %d, want 3", parityCount)
+	}
+	if len(groupIDs) != 3 {
+		t.Fatalf("distinct groups = %d, want 3", len(groupIDs))
 	}
 }
 

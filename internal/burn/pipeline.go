@@ -66,6 +66,8 @@ type Job struct {
 // state machine can be tested without a live database.
 type Cataloger interface {
 	NextDiskID(ctx context.Context, prefix string) (string, error)
+	NewBurnJobID(ctx context.Context) (string, error)
+	NextGroupID(ctx context.Context, burnJobID string, groupSize int) (string, error)
 	InsertDisk(ctx context.Context, d db.Disk) error
 	InsertFile(ctx context.Context, f db.FileRecord) error
 }
@@ -129,8 +131,11 @@ func mediaPrefix(mediaType string) string {
 }
 
 // planJob scans staging and greedily buckets files into disc-sized plans.
-// Plan 02 wraps this to additionally assign group/slot info and append
-// parity-role DiscPlans.
+// When opts.CrossDiscParity is set, data discs are assigned into groups of
+// opts.GroupSize (a trailing short group still gets its own parity disc),
+// and one "parity" role DiscPlan is appended per group — its Bucket is
+// left empty; runDisc computes its bytes via XOR at burn time (see
+// buildParityImage in reconstruct.go).
 func planJob(ctx context.Context, stagingDir string, opts Options, cat Cataloger) ([]DiscPlan, error) {
 	files, err := binpack.ScanStaging(stagingDir)
 	if err != nil {
@@ -148,7 +153,48 @@ func planJob(ctx context.Context, stagingDir string, opts Options, cat Cataloger
 		}
 		plans = append(plans, DiscPlan{DiskID: id, Role: "data", Bucket: b})
 	}
-	return plans, nil
+
+	if !opts.CrossDiscParity || len(plans) == 0 {
+		return plans, nil
+	}
+
+	groupSize := opts.GroupSize
+	if groupSize <= 0 {
+		groupSize = 10
+	}
+
+	burnJobID, err := cat.NewBurnJobID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var withGroups []DiscPlan
+	for start := 0; start < len(plans); start += groupSize {
+		end := start + groupSize
+		if end > len(plans) {
+			end = len(plans)
+		}
+		groupID, err := cat.NextGroupID(ctx, burnJobID, len(plans[start:end]))
+		if err != nil {
+			return nil, err
+		}
+		for i, p := range plans[start:end] {
+			p.GroupID = groupID
+			p.SlotIndex = i
+			withGroups = append(withGroups, p)
+		}
+		parityID, err := cat.NextDiskID(ctx, prefix)
+		if err != nil {
+			return nil, err
+		}
+		withGroups = append(withGroups, DiscPlan{
+			DiskID:    parityID,
+			Role:      "parity",
+			GroupID:   groupID,
+			SlotIndex: len(plans[start:end]),
+		})
+	}
+	return withGroups, nil
 }
 
 // Start plans a new job. It fails if a job is already in progress, if
@@ -389,6 +435,14 @@ func NewDBCataloger(pool *pgxpool.Pool) Cataloger { return pgxCataloger{pool: po
 
 func (c pgxCataloger) NextDiskID(ctx context.Context, prefix string) (string, error) {
 	return db.NextDiskID(ctx, c.pool, prefix)
+}
+func (c pgxCataloger) NewBurnJobID(ctx context.Context) (string, error) {
+	var id string
+	err := c.pool.QueryRow(ctx, `SELECT gen_random_uuid()`).Scan(&id)
+	return id, err
+}
+func (c pgxCataloger) NextGroupID(ctx context.Context, burnJobID string, groupSize int) (string, error) {
+	return db.InsertDiskGroup(ctx, c.pool, burnJobID, groupSize)
 }
 func (c pgxCataloger) InsertDisk(ctx context.Context, d db.Disk) error {
 	return db.InsertDisk(ctx, c.pool, d)
