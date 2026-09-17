@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"varis/internal/binpack"
@@ -151,5 +152,50 @@ func TestExtractFile_PullsOneMemberOut(t *testing.T) {
 	}
 	if string(got) != "world" {
 		t.Errorf("content = %q, want world", got)
+	}
+}
+
+func TestExtractFile_FromCompressedTar(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bucket := binpack.Bucket{Files: []binpack.FileInfo{{Path: "a.txt", Size: 5}}}
+	tarPath := filepath.Join(t.TempDir(), "out.tar.gz")
+	if err := WriteTar(root, bucket, tarPath, true); err != nil {
+		t.Fatal(err)
+	}
+
+	dest := filepath.Join(t.TempDir(), "recovered.txt")
+	if err := ExtractFile(tarPath, true, "a.txt", dest); err != nil {
+		t.Fatalf("ExtractFile: %v", err)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "hello" {
+		t.Errorf("content = %q, want hello", got)
+	}
+}
+
+func TestExtractFile_MissingMemberReturnsError(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bucket := binpack.Bucket{Files: []binpack.FileInfo{{Path: "a.txt", Size: 5}}}
+	tarPath := filepath.Join(t.TempDir(), "out.tar")
+	if err := WriteTar(root, bucket, tarPath, false); err != nil {
+		t.Fatal(err)
+	}
+
+	dest := filepath.Join(t.TempDir(), "recovered.txt")
+	err := ExtractFile(tarPath, false, "missing.txt", dest)
+	if err == nil {
+		t.Fatal("expected error for missing member, got nil")
+	}
+	if !strings.Contains(err.Error(), "missing.txt") {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), "missing.txt")
 	}
 }
