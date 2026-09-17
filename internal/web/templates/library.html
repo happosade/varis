@@ -7,9 +7,11 @@
 <h1>Library</h1>
 <input type="search" name="q" placeholder="Search files…"
        hx-get="/search" hx-trigger="keyup changed delay:300ms" hx-target="#results">
-<table id="results">
-  <tr><th>File</th><th>Size</th><th>Disc</th><th></th></tr>
+<table>
+  <thead><tr><th>File</th><th>Size</th><th>Disc</th><th></th></tr></thead>
+  <tbody id="results">
   {{template "search-rows" .}}
+  </tbody>
 </table>
 <div id="retrieve-status"></div>
 </body>
