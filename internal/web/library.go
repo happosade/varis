@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"net/http"
 
 	"varis/internal/db"
@@ -32,7 +33,11 @@ func (s *Server) startRetrieve(w http.ResponseWriter, r *http.Request) {
 	}
 	fileID := r.FormValue("file_id")
 	if err := s.retrieveMgr.Start(r.Context(), fileID); err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
+		status := http.StatusConflict
+		if errors.Is(err, db.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
 		return
 	}
 	s.renderRetrieveStatus(w)

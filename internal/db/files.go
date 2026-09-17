@@ -31,7 +31,7 @@ func GetFile(ctx context.Context, pool *pgxpool.Pool, id string) (FileRecord, er
 		`SELECT id, disk_id, original_path, size_bytes, file_hash FROM files WHERE id = $1`, id).
 		Scan(&f.ID, &f.DiskID, &f.OriginalPath, &f.SizeBytes, &f.FileHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return FileRecord{}, fmt.Errorf("file %s not found", id)
+		return FileRecord{}, fmt.Errorf("file %s not found: %w", id, ErrNotFound)
 	}
 	return f, err
 }

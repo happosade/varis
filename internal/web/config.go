@@ -22,7 +22,7 @@ func (s *Server) addMediaType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	capacity, err := strconv.ParseInt(r.FormValue("capacity_bytes"), 10, 64)
-	if err != nil {
+	if err != nil || capacity <= 0 {
 		http.Error(w, "invalid capacity_bytes", http.StatusBadRequest)
 		return
 	}

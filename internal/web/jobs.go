@@ -1,7 +1,6 @@
 package web
 
 import (
-	"fmt"
 	"net/http"
 	"strconv"
 
@@ -24,6 +23,13 @@ func (s *Server) currentJobView() *jobView {
 	if job == nil {
 		return nil
 	}
+	return jobViewFromJob(job)
+}
+
+// jobViewFromJob is split out from currentJobView so the index-clamping
+// logic (the one non-trivial bit of this adapter) can be unit-tested
+// directly against a *burn.Job, without needing a live *burn.Manager.
+func jobViewFromJob(job *burn.Job) *jobView {
 	idx := job.CurrentIndex
 	if idx >= len(job.Plans) {
 		idx = len(job.Plans) - 1
@@ -48,7 +54,11 @@ func (s *Server) startBurn(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	parityPercent, _ := strconv.Atoi(r.FormValue("parity_percent"))
+	parityPercent, err := strconv.Atoi(r.FormValue("parity_percent"))
+	if err != nil || parityPercent < 5 || parityPercent > 50 {
+		http.Error(w, "parity_percent must be an integer between 5 and 50", http.StatusBadRequest)
+		return
+	}
 	groupSize, _ := strconv.Atoi(r.FormValue("group_size"))
 
 	opts := burn.Options{
@@ -60,7 +70,7 @@ func (s *Server) startBurn(w http.ResponseWriter, r *http.Request) {
 		GroupSize:       groupSize,
 	}
 	if err := s.burnMgr.Start(r.Context(), opts); err != nil {
-		fmt.Fprintf(w, `<p class="error">%s</p>`, err)
+		s.render(w, "error-fragment", err.Error())
 		return
 	}
 	s.render(w, "jobs-fragment", s.currentJobView())
@@ -72,7 +82,7 @@ func (s *Server) jobsFragment(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) continueDisc(w http.ResponseWriter, r *http.Request) {
 	if err := s.burnMgr.ContinueNextDisc(r.Context()); err != nil {
-		fmt.Fprintf(w, `<p class="error">%s</p>`, err)
+		s.render(w, "error-fragment", err.Error())
 		return
 	}
 	s.render(w, "jobs-fragment", s.currentJobView())
@@ -80,7 +90,7 @@ func (s *Server) continueDisc(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) retryDisc(w http.ResponseWriter, r *http.Request) {
 	if err := s.burnMgr.Retry(r.Context()); err != nil {
-		fmt.Fprintf(w, `<p class="error">%s</p>`, err)
+		s.render(w, "error-fragment", err.Error())
 		return
 	}
 	s.render(w, "jobs-fragment", s.currentJobView())
