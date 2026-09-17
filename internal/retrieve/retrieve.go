@@ -49,7 +49,6 @@ type Manager struct {
 	ex           execx.Executor
 	retrievedDir string
 	scratchDir   string
-	device       string
 	dryRunDir    string
 
 	mu                     sync.Mutex
@@ -58,8 +57,8 @@ type Manager struct {
 	reconstructionCapacity int64
 }
 
-func NewManager(cat Catalog, ex execx.Executor, retrievedDir, scratchDir, device, dryRunDir string) *Manager {
-	return &Manager{cat: cat, ex: ex, retrievedDir: retrievedDir, scratchDir: scratchDir, device: device, dryRunDir: dryRunDir}
+func NewManager(cat Catalog, ex execx.Executor, retrievedDir, scratchDir, dryRunDir string) *Manager {
+	return &Manager{cat: cat, ex: ex, retrievedDir: retrievedDir, scratchDir: scratchDir, dryRunDir: dryRunDir}
 }
 
 // Current returns a snapshot of the in-flight (or just-finished/failed)
@@ -103,11 +102,12 @@ func (m *Manager) Start(ctx context.Context, fileID string) error {
 	return nil
 }
 
-// ReadDisk is called once the user has inserted the disc named by the
-// current job and clicked "Read Disk" — or, for a dry-run disc, is called
-// with nothing to insert at all; its bytes are read straight from
-// dryRunDir instead of the physical device.
-func (m *Manager) ReadDisk(ctx context.Context) error {
+// ReadDisk is called once the user has entered the device/mount path for
+// the disc named by the current job and clicked "Read Disk" — unless the
+// disc is a dry-run disc, in which case targetPath is ignored: nothing
+// needed inserting for a dry run, so there's nothing for the caller to
+// have correctly supplied either.
+func (m *Manager) ReadDisk(ctx context.Context, targetPath string) error {
 	m.mu.Lock()
 	job := m.job
 	if job == nil || job.State != StateAwaitingMedia {
@@ -130,7 +130,7 @@ func (m *Manager) ReadDisk(ctx context.Context) error {
 		// could ever fix.
 		return m.fail(job, err)
 	}
-	src := m.device
+	src := targetPath
 	if disk.IsDryRun {
 		src = filepath.Join(m.dryRunDir, job.DiskID+".iso")
 	}
@@ -286,13 +286,16 @@ func (m *Manager) Remaining() []string {
 	return m.reconstructor.Remaining()
 }
 
-// ReadReconstructionDisc is called once the user has inserted the next
-// disc named by Remaining() and clicked "Read". Once every other member
-// has been supplied, it reconstructs the missing disc's image and
-// extracts the originally requested file straight out of it. It reuses
-// the same capacity StartReconstruction resolved, rather than taking a
-// media type from the caller — every member of a group shares one media
-// type, so there's nothing for a caller to legitimately vary here.
+// ReadReconstructionDisc is called once the user has entered the
+// device/mount path for the disc named by Remaining() and clicked
+// "Read" — unless that member is a dry-run disc, in which case
+// targetPath is ignored the same way ReadDisk ignores it. Once every
+// other member has been supplied, it reconstructs the missing disc's
+// image and extracts the originally requested file straight out of it.
+// It reuses the same capacity StartReconstruction resolved, rather than
+// taking a media type from the caller — every member of a group shares
+// one media type, so there's nothing for a caller to legitimately vary
+// here.
 //
 // A surviving data disc's raw device bytes ARE the exact operand
 // buildParityPayload XOR'd at burn time (its full burned ISO, zero-padded
@@ -304,7 +307,7 @@ func (m *Manager) Remaining() []string {
 // payload, not the payload itself. Using the wrapped bytes directly would
 // XOR against the wrong operand and silently corrupt reconstruction, so
 // the parity disc's payload is extracted from inside its ISO instead.
-func (m *Manager) ReadReconstructionDisc(ctx context.Context, diskID string) error {
+func (m *Manager) ReadReconstructionDisc(ctx context.Context, diskID, targetPath string) error {
 	m.mu.Lock()
 	job := m.job
 	r := m.reconstructor
@@ -323,7 +326,7 @@ func (m *Manager) ReadReconstructionDisc(ctx context.Context, diskID string) err
 	if err != nil {
 		return m.revertToReconstructing(job, err)
 	}
-	src := m.device
+	src := targetPath
 	if disk.IsDryRun {
 		src = filepath.Join(m.dryRunDir, diskID+".iso")
 	}

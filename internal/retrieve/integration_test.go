@@ -316,7 +316,7 @@ func TestEndToEnd_BurnGroupLoseADiscReconstruct(t *testing.T) {
 
 	// --- Retrieve photo1.jpg: its disc is "lost" (simulate an unreadable disc). ---
 	retrievedDir := t.TempDir()
-	retrieveMgr := NewManager(store, ex, retrievedDir, scratch, device, t.TempDir())
+	retrieveMgr := NewManager(store, ex, retrievedDir, scratch, t.TempDir())
 
 	var photo1ID string
 	for _, f := range store.files {
@@ -332,7 +332,7 @@ func TestEndToEnd_BurnGroupLoseADiscReconstruct(t *testing.T) {
 	if err := os.WriteFile(device, []byte("not a valid disc"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := retrieveMgr.ReadDisk(context.Background()); err == nil {
+	if err := retrieveMgr.ReadDisk(context.Background(), device); err == nil {
 		t.Fatal("expected ReadDisk to fail against a garbage device")
 	}
 	if retrieveMgr.Current().State != StateNeedsReconstruction {
@@ -352,7 +352,7 @@ func TestEndToEnd_BurnGroupLoseADiscReconstruct(t *testing.T) {
 		if err := shelf.insert(diskID, device); err != nil {
 			t.Fatalf("inserting %s: %v", diskID, err)
 		}
-		if err := retrieveMgr.ReadReconstructionDisc(context.Background(), diskID); err != nil {
+		if err := retrieveMgr.ReadReconstructionDisc(context.Background(), diskID, device); err != nil {
 			t.Fatalf("ReadReconstructionDisc(%s): %v", diskID, err)
 		}
 	}
