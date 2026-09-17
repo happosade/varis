@@ -1,0 +1,20 @@
+{{define "jobs-fragment"}}
+{{if .}}
+<p>Disc {{.CurrentIndex1}}/{{.TotalDiscs}} — state: {{.State}}{{if .Err}} — error: {{.Err}}{{end}}</p>
+{{if eq .State "AWAITING_DISC"}}
+  <form hx-post="/jobs/continue" hx-target="#job-status" hx-swap="innerHTML">
+    <button type="submit">Insert blank disc, continue</button>
+  </form>
+{{end}}
+{{if eq .State "FAILED"}}
+  <form hx-post="/jobs/retry" hx-target="#job-status" hx-swap="innerHTML">
+    <button type="submit">Retry this disc</button>
+  </form>
+{{end}}
+{{if eq .State "DONE"}}
+  <p><a href="/cover/{{.CurrentDiskID}}">Printable cover</a></p>
+{{end}}
+{{else}}
+<p>No burn in progress.</p>
+{{end}}
+{{end}}

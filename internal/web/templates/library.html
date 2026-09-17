@@ -1,0 +1,33 @@
+{{define "library"}}
+<!doctype html>
+<html>
+<head>{{template "head"}}</head>
+<body>
+{{template "nav"}}
+<h1>Library</h1>
+<input type="search" name="q" placeholder="Search files…"
+       hx-get="/search" hx-trigger="keyup changed delay:300ms" hx-target="#results">
+<table id="results">
+  <tr><th>File</th><th>Size</th><th>Disc</th><th></th></tr>
+  {{template "search-rows" .}}
+</table>
+<div id="retrieve-status"></div>
+</body>
+</html>
+{{end}}
+
+{{define "search-rows"}}
+{{range .}}
+<tr>
+  <td>{{.OriginalPath}}</td>
+  <td>{{.SizeBytes}}</td>
+  <td>{{.DiskID}}</td>
+  <td>
+    <form hx-post="/retrieve" hx-target="#retrieve-status" hx-swap="innerHTML">
+      <input type="hidden" name="file_id" value="{{.ID}}">
+      <button type="submit">Get</button>
+    </form>
+  </td>
+</tr>
+{{end}}
+{{end}}

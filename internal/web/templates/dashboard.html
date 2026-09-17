@@ -1,0 +1,28 @@
+{{define "dashboard"}}
+<!doctype html>
+<html>
+<head>{{template "head"}}</head>
+<body>
+{{template "nav"}}
+<h1>To-Archive</h1>
+<p>Staged: {{.StagedBytes}} bytes.</p>
+
+<form hx-post="/burn" hx-target="#job-status" hx-swap="innerHTML">
+  <label>Media type
+    <select name="media_type">
+      {{range .MediaTypes}}<option value="{{.Name}}">{{.Name}} ({{.CapacityBytes}} bytes)</option>{{end}}
+    </select>
+  </label>
+  <label>Parity % <input type="number" name="parity_percent" value="10" min="5" max="50"></label>
+  <label><input type="checkbox" name="compress"> Compress</label>
+  <label><input type="checkbox" name="cross_disc_parity"> Add cross-disc recovery disc</label>
+  <label>Group size <input type="number" name="group_size" value="10" min="2"></label>
+  <button type="submit">Burn</button>
+</form>
+
+<div id="job-status" hx-get="/jobs" hx-trigger="load, every 2s">
+  {{template "jobs-fragment" .Job}}
+</div>
+</body>
+</html>
+{{end}}
