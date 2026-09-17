@@ -3,6 +3,7 @@ package burn
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -136,7 +137,7 @@ func mediaPrefix(mediaType string) string {
 // opts.GroupSize (a trailing short group still gets its own parity disc),
 // and one "parity" role DiscPlan is appended per group — its Bucket is
 // left empty; runDisc computes its bytes via XOR at burn time (see
-// buildParityImage in reconstruct.go).
+// buildParityPayload in pipeline.go).
 func planJob(ctx context.Context, stagingDir string, opts Options, cat Cataloger) ([]DiscPlan, error) {
 	files, err := binpack.ScanStaging(stagingDir)
 	if err != nil {
@@ -373,7 +374,32 @@ func (m *Manager) runDisc(ctx context.Context, job *Job, plan DiscPlan) error {
 	if err := m.commitDisc(ctx, job, plan, isoHash); err != nil {
 		return fmt.Errorf("db commit: %w", err)
 	}
+
+	if plan.Role == "parity" {
+		m.cleanupGroupDataISOs(job, plan)
+	}
 	return nil
+}
+
+// cleanupGroupDataISOs removes the spool ".iso" files for plan's group's
+// data discs once that group's parity disc has been fully burned, verified,
+// and committed. Those ISOs exist only so buildParityPayload can read them
+// while the group's parity disc is being processed; once the parity disc
+// is done, nothing else needs them, and leaving them behind would let spool
+// usage grow with every completed group in a multi-group job. A failure
+// here is logged rather than returned: the disc calling this has already
+// succeeded (burned, verified, committed), so a stale spool file is not
+// worth failing an otherwise-complete disc over.
+func (m *Manager) cleanupGroupDataISOs(job *Job, plan DiscPlan) {
+	for _, p := range job.Plans {
+		if p.GroupID != plan.GroupID || p.Role != "data" {
+			continue
+		}
+		isoPath := filepath.Join(m.spoolDir, p.DiskID+".iso")
+		if err := os.Remove(isoPath); err != nil && !os.IsNotExist(err) {
+			log.Printf("burn: cleaning up data disc image %s after group %s's parity disc committed: %v", isoPath, plan.GroupID, err)
+		}
+	}
 }
 
 // buildParityPayload XORs the already-burned data discs' ISO images in

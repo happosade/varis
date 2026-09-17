@@ -1,10 +1,12 @@
 package burn
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +14,7 @@ import (
 
 	"varis/internal/db"
 	"varis/internal/execx"
+	"varis/internal/xordisk"
 )
 
 // FakeCataloger is an in-memory Cataloger for tests.
@@ -93,6 +96,48 @@ func fakeExecutorForHappyPath(devicePath string) *execx.FakeExecutor {
 			},
 		},
 	}
+}
+
+// fakeExecutorWithContentAwareISO is like fakeExecutorForHappyPath, except
+// its fake xorriso embeds the real bytes of sourceDir (every file in it,
+// concatenated in sorted order) into the ISO instead of a fixed placeholder.
+// Parity-disc tests need this: buildParityPayload's XOR only reads distinct
+// bytes from an actual data disc's ISO, so a fixed placeholder ISO would
+// make every group's parity payload identically zero and unable to
+// distinguish "computed the right XOR" from "computed nothing at all".
+func fakeExecutorWithContentAwareISO(devicePath string) *execx.FakeExecutor {
+	ex := fakeExecutorForHappyPath(devicePath)
+	ex.Funcs["xorriso"] = func(args []string) execx.Result {
+		sourceDir := args[len(args)-1]
+		var outPath string
+		for i, a := range args {
+			if a == "-o" && i+1 < len(args) {
+				outPath = args[i+1]
+			}
+		}
+		entries, err := os.ReadDir(sourceDir)
+		if err != nil {
+			return execx.Result{Err: err}
+		}
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		sort.Strings(names)
+		var buf bytes.Buffer
+		for _, n := range names {
+			data, err := os.ReadFile(filepath.Join(sourceDir, n))
+			if err != nil {
+				return execx.Result{Err: err}
+			}
+			buf.Write(data)
+		}
+		if err := os.WriteFile(outPath, buf.Bytes(), 0o644); err != nil {
+			return execx.Result{Err: err}
+		}
+		return execx.Result{}
+	}
+	return ex
 }
 
 func writeStagingFile(t *testing.T, dir, relPath, content string) {
@@ -592,7 +637,7 @@ func TestManager_BurnsGroupWithParityDisc(t *testing.T) {
 	writeStagingFile(t, staging, "b.bin", strings.Repeat("B", 60))
 
 	cat := newFakeCataloger()
-	ex := fakeExecutorForHappyPath(device)
+	ex := fakeExecutorWithContentAwareISO(device)
 	mgr := NewManager(cat, ex, staging, spool, device)
 	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
 
@@ -607,11 +652,29 @@ func TestManager_BurnsGroupWithParityDisc(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	// 2 data discs + 1 parity disc for the group.
-	for i := 0; i < 3; i++ {
+	plans := mgr.Current().Plans
+	if len(plans) != 3 {
+		t.Fatalf("plans = %d, want 3 (got %+v)", len(plans), plans)
+	}
+
+	// 2 data discs + 1 parity disc for the group. Capture each data disc's
+	// burned ISO bytes right after it's burned, since the group's parity
+	// disc (burned last here) reclaims them once it commits.
+	var dataISOs [][]byte
+	for i, p := range plans {
 		if err := mgr.ContinueNextDisc(context.Background()); err != nil {
 			t.Fatalf("ContinueNextDisc[%d]: %v (job err: %v)", i, err, mgr.Current().Err)
 		}
+		if p.Role == "data" {
+			data, err := os.ReadFile(filepath.Join(spool, p.DiskID+".iso"))
+			if err != nil {
+				t.Fatalf("reading data disc %s iso: %v", p.DiskID, err)
+			}
+			dataISOs = append(dataISOs, data)
+		}
+	}
+	if len(dataISOs) != 2 {
+		t.Fatalf("captured %d data disc ISOs, want 2", len(dataISOs))
 	}
 
 	job := mgr.Current()
@@ -620,12 +683,133 @@ func TestManager_BurnsGroupWithParityDisc(t *testing.T) {
 	}
 
 	var parityDisks int
+	var groupID string
+	slotByID := map[string]int{}
 	for _, d := range cat.Disks {
+		if d.GroupID == nil || d.SlotIndex == nil {
+			t.Fatalf("disk %s committed with nil GroupID/SlotIndex: %+v", d.ID, d)
+		}
+		if groupID == "" {
+			groupID = *d.GroupID
+		} else if *d.GroupID != groupID {
+			t.Fatalf("disk %s GroupID = %s, want %s (every disc in the job belongs to the same group here)", d.ID, *d.GroupID, groupID)
+		}
+		slotByID[d.ID] = *d.SlotIndex
 		if d.Role == "parity" {
 			parityDisks++
 		}
 	}
 	if parityDisks != 1 {
 		t.Fatalf("parityDisks = %d, want 1 (got disks: %+v)", parityDisks, cat.Disks)
+	}
+	wantSlots := map[string]int{plans[0].DiskID: 0, plans[1].DiskID: 1, plans[2].DiskID: 2}
+	for id, want := range wantSlots {
+		if got := slotByID[id]; got != want {
+			t.Errorf("SlotIndex[%s] = %d, want %d", id, got, want)
+		}
+	}
+
+	// The parity disc's actual committed payload must be the real XOR of
+	// the two data discs' ISO bytes, padded/truncated to CapacityBytes —
+	// not just "some parity-role disc got inserted".
+	wantParity := xordisk.XOR(dataISOs, opts.CapacityBytes)
+	parityID := plans[2].DiskID
+	gotParity, err := os.ReadFile(filepath.Join(spool, parityID+"-src", parityID+".tar"))
+	if err != nil {
+		t.Fatalf("reading parity payload: %v", err)
+	}
+	if !bytes.Equal(gotParity, wantParity) {
+		t.Fatalf("parity payload = %x, want XOR of data discs = %x", gotParity, wantParity)
+	}
+
+	// Once the group's parity disc has committed, its data discs' spool
+	// ISOs should have been reclaimed.
+	for _, p := range plans[:2] {
+		if _, err := os.Stat(filepath.Join(spool, p.DiskID+".iso")); !os.IsNotExist(err) {
+			t.Errorf("data disc %s iso still present in spool after its group's parity disc committed", p.DiskID)
+		}
+	}
+}
+
+func TestManager_ParityPayload_DoesNotLeakAcrossGroups(t *testing.T) {
+	staging := t.TempDir()
+	spool := t.TempDir()
+	device := filepath.Join(t.TempDir(), "device")
+	writeStagingFile(t, staging, "a.bin", strings.Repeat("A", 60))
+	writeStagingFile(t, staging, "b.bin", strings.Repeat("B", 60))
+	writeStagingFile(t, staging, "c.bin", strings.Repeat("C", 60))
+	writeStagingFile(t, staging, "d.bin", strings.Repeat("D", 60))
+
+	cat := newFakeCataloger()
+	ex := fakeExecutorWithContentAwareISO(device)
+	mgr := NewManager(cat, ex, staging, spool, device)
+	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
+
+	opts := Options{
+		MediaType:       "BD-R",
+		CapacityBytes:   70, // 1 file per data disc
+		ParityPercent:   10,
+		CrossDiscParity: true,
+		GroupSize:       2,
+	}
+	if err := mgr.Start(context.Background(), opts); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	plans := mgr.Current().Plans
+	if len(plans) != 6 {
+		t.Fatalf("plans = %d, want 6 (2 groups of 2 data + 1 parity each), got %+v", len(plans), plans)
+	}
+
+	dataISOsByGroup := map[string][][]byte{}
+	for i, p := range plans {
+		if err := mgr.ContinueNextDisc(context.Background()); err != nil {
+			t.Fatalf("ContinueNextDisc[%d]: %v (job err: %v)", i, err, mgr.Current().Err)
+		}
+		if p.Role == "data" {
+			data, err := os.ReadFile(filepath.Join(spool, p.DiskID+".iso"))
+			if err != nil {
+				t.Fatalf("reading data disc %s iso: %v", p.DiskID, err)
+			}
+			dataISOsByGroup[p.GroupID] = append(dataISOsByGroup[p.GroupID], data)
+		}
+	}
+
+	job := mgr.Current()
+	if job.State != StateDone {
+		t.Fatalf("State = %s, want DONE", job.State)
+	}
+	if len(dataISOsByGroup) != 2 {
+		t.Fatalf("groups with captured data ISOs = %d, want 2", len(dataISOsByGroup))
+	}
+
+	var parityPlans []DiscPlan
+	for _, p := range plans {
+		if p.Role == "parity" {
+			parityPlans = append(parityPlans, p)
+		}
+	}
+	if len(parityPlans) != 2 {
+		t.Fatalf("parity plans = %d, want 2", len(parityPlans))
+	}
+
+	var parityPayloads [][]byte
+	for _, pp := range parityPlans {
+		want := xordisk.XOR(dataISOsByGroup[pp.GroupID], opts.CapacityBytes)
+		got, err := os.ReadFile(filepath.Join(spool, pp.DiskID+"-src", pp.DiskID+".tar"))
+		if err != nil {
+			t.Fatalf("reading parity payload for group %s: %v", pp.GroupID, err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("group %s parity payload = %x, want XOR of its own 2 data discs = %x", pp.GroupID, got, want)
+		}
+		parityPayloads = append(parityPayloads, got)
+	}
+
+	// Distinct file content per group must produce distinct parity
+	// payloads; if the two groups' payloads matched, that would mean one
+	// group's parity disc leaked in the other group's data.
+	if bytes.Equal(parityPayloads[0], parityPayloads[1]) {
+		t.Fatalf("the two groups' parity payloads are identical (%x) — suggests cross-group leakage", parityPayloads[0])
 	}
 }
