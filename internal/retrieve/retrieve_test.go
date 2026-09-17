@@ -179,6 +179,14 @@ func TestManager_ReadDisk_FileNotInTarRejected(t *testing.T) {
 // .iso image" (which should succeed) within a single test, since
 // ReadReconstructionDisc/readFrom compute the reconstructed image's path
 // deterministically as "<scratchDir>/<job.DiskID>.reconstructed.iso".
+// srcAwareDiscExecutor's xorriso fake serves fixture content by exact
+// (src, pathInISO) match against goodSrc, and — for any other src (e.g. a
+// parity disc's physical device, extracted during reconstruction to pull
+// out its raw payload) — passes that src file's raw bytes straight
+// through regardless of pathInISO. Reconstruction tests only care that
+// some payload bytes get read and folded in, not that they're byte
+// -accurate; the reconstructed image is what actually gets decoded via
+// goodSrc's fixture content, checked precisely.
 func srcAwareDiscExecutor(goodSrc string, files map[string][]byte) *execx.FakeExecutor {
 	return &execx.FakeExecutor{
 		Funcs: map[string]func(args []string) execx.Result{
@@ -187,7 +195,11 @@ func srcAwareDiscExecutor(goodSrc string, files map[string][]byte) *execx.FakeEx
 				pathInISO := args[3] // ["-indev", src, "-extract", pathInISO, destPath]
 				destPath := args[4]
 				if src != goodSrc {
-					return execx.Result{Err: os.ErrNotExist}
+					data, err := os.ReadFile(src)
+					if err != nil {
+						return execx.Result{Err: os.ErrNotExist}
+					}
+					return execx.Result{Err: os.WriteFile(destPath, data, 0o644)}
 				}
 				content, ok := files[pathInISO]
 				if !ok {

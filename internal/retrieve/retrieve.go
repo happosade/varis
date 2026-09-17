@@ -277,6 +277,17 @@ func (m *Manager) Remaining() []string {
 // the same capacity StartReconstruction resolved, rather than taking a
 // media type from the caller — every member of a group shares one media
 // type, so there's nothing for a caller to legitimately vary here.
+//
+// A surviving data disc's raw device bytes ARE the exact operand
+// buildParityPayload XOR'd at burn time (its full burned ISO, zero-padded
+// to capacity), so those are read raw via ReadRawImage. The parity disc's
+// raw device bytes are NOT that operand: buildParityPayload's XOR output
+// was written as the parity disc's own "<diskID>.tar" payload and then
+// wrapped in its own ISO (its own TOC + par2 alongside it, same as any
+// data disc) — so its raw device bytes are that wrapper around the
+// payload, not the payload itself. Using the wrapped bytes directly would
+// XOR against the wrong operand and silently corrupt reconstruction, so
+// the parity disc's payload is extracted from inside its ISO instead.
 func (m *Manager) ReadReconstructionDisc(ctx context.Context, diskID string) error {
 	m.mu.Lock()
 	job := m.job
@@ -292,8 +303,17 @@ func (m *Manager) ReadReconstructionDisc(ctx context.Context, diskID string) err
 	job.State = StateReadingReconstructionDisc
 	m.mu.Unlock()
 
+	disk, err := m.cat.GetDisk(ctx, diskID)
+	if err != nil {
+		return m.revertToReconstructing(job, err)
+	}
+
 	imagePath := filepath.Join(m.scratchDir, diskID+".img")
-	if err := burn.ReadRawImage(m.device, imagePath, capacity); err != nil {
+	if disk.Role == "parity" {
+		if err := burn.ExtractFromDisc(ctx, m.ex, m.device, "/"+diskID+".tar", imagePath); err != nil {
+			return m.revertToReconstructing(job, err)
+		}
+	} else if err := burn.ReadRawImage(m.device, imagePath, capacity); err != nil {
 		return m.revertToReconstructing(job, err)
 	}
 	data, err := os.ReadFile(imagePath)
