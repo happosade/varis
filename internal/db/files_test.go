@@ -228,3 +228,40 @@ func TestSearchFiles_ExposesDiskIsDryRun(t *testing.T) {
 		t.Fatal("expected to find the inserted file in search results")
 	}
 }
+
+func TestGetMediaType_ReturnsFullRow(t *testing.T) {
+	pool := requirePool(t)
+	ctx := context.Background()
+	if err := SeedMediaTypes(ctx, pool); err != nil {
+		t.Fatalf("SeedMediaTypes: %v", err)
+	}
+	mt, err := GetMediaType(ctx, pool, "BD-R")
+	if err != nil {
+		t.Fatalf("GetMediaType: %v", err)
+	}
+	if mt.CapacityBytes != 25_025_314_816 || mt.IDPrefix != "BD" || mt.WriteKind != "optical" {
+		t.Errorf("GetMediaType(BD-R) = %+v, want CapacityBytes=25025314816 IDPrefix=BD WriteKind=optical", mt)
+	}
+}
+
+func TestAddMediaType_CarriesIDPrefixAndWriteKind(t *testing.T) {
+	pool := requirePool(t)
+	ctx := context.Background()
+	// A short, fixed name: media_types.name is VARCHAR(30), too narrow for
+	// a prefix plus this test's own (long) name via t.Name(). Deleted first
+	// so the test is safely re-runnable against the shared dev DB.
+	name := "TESTUSB-ADDMT"
+	if _, err := pool.Exec(ctx, `DELETE FROM media_types WHERE name = $1`, name); err != nil {
+		t.Fatalf("cleaning up any prior run's row: %v", err)
+	}
+	if err := AddMediaType(ctx, pool, MediaType{Name: name, CapacityBytes: 1000, IDPrefix: "USB", WriteKind: "filesystem"}); err != nil {
+		t.Fatalf("AddMediaType: %v", err)
+	}
+	mt, err := GetMediaType(ctx, pool, name)
+	if err != nil {
+		t.Fatalf("GetMediaType: %v", err)
+	}
+	if mt.IDPrefix != "USB" || mt.WriteKind != "filesystem" {
+		t.Errorf("GetMediaType(%s) = %+v, want IDPrefix=USB WriteKind=filesystem", name, mt)
+	}
+}

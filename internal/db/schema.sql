@@ -46,3 +46,13 @@ ALTER TABLE files ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_files_tags ON files USING gin (tags);
 
 ALTER TABLE disks ADD COLUMN IF NOT EXISTS is_dry_run BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE media_types ADD COLUMN IF NOT EXISTS id_prefix TEXT NOT NULL DEFAULT 'DISC';
+ALTER TABLE media_types ADD COLUMN IF NOT EXISTS write_kind TEXT NOT NULL DEFAULT 'optical';
+
+-- Backfill the two seeded defaults' real prefixes for any database that
+-- already had these rows before id_prefix existed (SeedMediaTypes' own
+-- ON CONFLICT DO NOTHING never touches pre-existing rows). Guarded by the
+-- ALTER TABLE's own default so a later manual customization is left alone.
+UPDATE media_types SET id_prefix = 'BD', write_kind = 'optical' WHERE name = 'BD-R' AND id_prefix = 'DISC';
+UPDATE media_types SET id_prefix = 'BDDL', write_kind = 'optical' WHERE name = 'BD-R DL' AND id_prefix = 'DISC';
