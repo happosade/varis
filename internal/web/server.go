@@ -31,7 +31,7 @@ func NewServer(pool *pgxpool.Pool, burnMgr *burn.Manager, retrieveMgr *retrieve.
 }
 
 func (s *Server) Routes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /", s.dashboard)
+	mux.HandleFunc("GET /{$}", s.dashboard)
 	mux.HandleFunc("POST /burn", s.startBurn)
 	mux.HandleFunc("GET /jobs", s.jobsFragment)
 	mux.HandleFunc("POST /jobs/continue", s.continueDisc)
