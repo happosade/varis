@@ -19,22 +19,20 @@ import (
 
 // FakeCataloger is an in-memory Cataloger for tests.
 type FakeCataloger struct {
-	mu             sync.Mutex
-	seq            map[string]int
-	burnJobSeq     int
-	groupSeq       int
-	Disks          []db.Disk
-	Files          []db.FileRecord
-	StagedMetadata map[string]fakeStagedMeta
-}
-
-type fakeStagedMeta struct {
-	Tags        []string
-	Description string
+	mu         sync.Mutex
+	seq        map[string]int
+	burnJobSeq int
+	groupSeq   int
+	Disks      []db.Disk
+	Files      []db.FileRecord
+	// StagedMetadata is populated directly by tests before starting the
+	// Manager (single-goroutine setup, not under f.mu); ConsumeStagedMetadata
+	// itself locks for its read+delete once the Manager is running.
+	StagedMetadata map[string]db.StagedMetadata
 }
 
 func newFakeCataloger() *FakeCataloger {
-	return &FakeCataloger{seq: map[string]int{}, StagedMetadata: map[string]fakeStagedMeta{}}
+	return &FakeCataloger{seq: map[string]int{}, StagedMetadata: map[string]db.StagedMetadata{}}
 }
 
 func (f *FakeCataloger) NextDiskID(ctx context.Context, prefix string, alreadyAllocated int) (string, error) {
@@ -344,17 +342,16 @@ func TestManager_RejectsWhenNotEnoughFreeSpace(t *testing.T) {
 
 func TestManager_CommitDisc_FoldsStagedMetadataIntoFileRecord(t *testing.T) {
 	staging := t.TempDir()
-	if err := os.WriteFile(filepath.Join(staging, "a.bin"), []byte("hello"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeStagingFile(t, staging, "a.bin", "hello")
 
-	device := t.TempDir() + "/device"
+	device := filepath.Join(t.TempDir(), "device")
 	cat := newFakeCataloger()
-	cat.StagedMetadata["a.bin"] = fakeStagedMeta{Tags: []string{"family"}, Description: "a note"}
+	cat.StagedMetadata["a.bin"] = db.StagedMetadata{Tags: []string{"family"}, Description: "a note"}
 	ex := fakeExecutorForHappyPath(device)
 
 	mgr := NewManager(cat, ex, staging, t.TempDir(), device)
-	if err := mgr.Start(context.Background(), Options{MediaType: "BD-R", CapacityBytes: 1_000_000, ParityPercent: 10}); err != nil {
+	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
+	if err := mgr.Start(context.Background(), Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if err := mgr.ContinueNextDisc(context.Background()); err != nil {
@@ -375,16 +372,15 @@ func TestManager_CommitDisc_FoldsStagedMetadataIntoFileRecord(t *testing.T) {
 
 func TestManager_CommitDisc_UntaggedFileGetsEmptyMetadata(t *testing.T) {
 	staging := t.TempDir()
-	if err := os.WriteFile(filepath.Join(staging, "b.bin"), []byte("hello"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeStagingFile(t, staging, "b.bin", "hello")
 
-	device := t.TempDir() + "/device"
+	device := filepath.Join(t.TempDir(), "device")
 	cat := newFakeCataloger()
 	ex := fakeExecutorForHappyPath(device)
 
 	mgr := NewManager(cat, ex, staging, t.TempDir(), device)
-	if err := mgr.Start(context.Background(), Options{MediaType: "BD-R", CapacityBytes: 1_000_000, ParityPercent: 10}); err != nil {
+	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
+	if err := mgr.Start(context.Background(), Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if err := mgr.ContinueNextDisc(context.Background()); err != nil {

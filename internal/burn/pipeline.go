@@ -72,6 +72,10 @@ type Cataloger interface {
 	NextGroupID(ctx context.Context, burnJobID string, groupSize int) (string, error)
 	InsertDisk(ctx context.Context, d db.Disk) error
 	InsertFile(ctx context.Context, f db.FileRecord) error
+	// ConsumeStagedMetadata reads AND DELETES path's staged metadata — a
+	// path with no metadata returns (nil, "", nil), not an error. There is
+	// no peek-without-consuming variant; see commitDisc's call site for
+	// why that's an accepted, bounded tradeoff.
 	ConsumeStagedMetadata(ctx context.Context, path string) (tags []string, description string, err error)
 }
 
@@ -495,6 +499,14 @@ func (m *Manager) commitDisc(ctx context.Context, job *Job, plan DiscPlan, isoHa
 		if err != nil {
 			return err
 		}
+		// Consumed before InsertFile, so a subsequent InsertFile failure
+		// still loses this file's staged tags/description even though the
+		// burn as a whole is safe to retry (the staging file itself is
+		// untouched until InsertFile succeeds, per the removal below).
+		// Ordering it the other way would require a peek-then-delete,
+		// giving up ConsumeStagedMetadata's single-round-trip DELETE ...
+		// RETURNING — accepted since the residual cost is re-entering one
+		// file's metadata, not any catalog corruption.
 		tags, description, err := m.cat.ConsumeStagedMetadata(ctx, f.Path)
 		if err != nil {
 			return err
