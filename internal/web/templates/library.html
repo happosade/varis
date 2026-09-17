@@ -39,7 +39,10 @@
 {{if .}}
 <p>File: {{.OriginalPath}} — disc: {{.DiskID}} — state: {{.State}}{{if .Err}} — {{.Err}}{{end}}</p>
 {{if eq .State "AWAITING_MEDIA"}}
-  <form hx-post="/retrieve/read" hx-target="#retrieve-status"><button type="submit">Insert {{.DiskID}}, Read Disk</button></form>
+  <form hx-post="/retrieve/read" hx-target="#retrieve-status">
+    <label>Device / target path <input type="text" name="target_path" value="/dev/sr0"></label>
+    <button type="submit">Insert {{.DiskID}}, Read Disk</button>
+  </form>
 {{end}}
 {{if eq .State "NEEDS_RECONSTRUCTION"}}
   <form hx-post="/retrieve/reconstruct/start" hx-target="#retrieve-status"><button type="submit">Reconstruct from group</button></form>
@@ -48,6 +51,7 @@
   {{range .Remaining}}
   <form hx-post="/retrieve/reconstruct/read" hx-target="#retrieve-status">
     <input type="hidden" name="disk_id" value="{{.}}">
+    <label>Device / target path <input type="text" name="target_path" value="/dev/sr0"></label>
     <button type="submit">Insert {{.}}, Read</button>
   </form>
   {{end}}

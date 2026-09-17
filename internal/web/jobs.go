@@ -57,7 +57,7 @@ func (s *Server) startBurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mediaType := r.FormValue("media_type")
-	capacity, err := db.GetMediaTypeCapacity(r.Context(), s.pool, mediaType)
+	mt, err := db.GetMediaType(r.Context(), s.pool, mediaType)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -71,12 +71,15 @@ func (s *Server) startBurn(w http.ResponseWriter, r *http.Request) {
 
 	opts := burn.Options{
 		MediaType:       mediaType,
-		CapacityBytes:   capacity,
+		CapacityBytes:   mt.CapacityBytes,
 		ParityPercent:   parityPercent,
 		Compress:        r.FormValue("compress") == "on",
 		CrossDiscParity: r.FormValue("cross_disc_parity") == "on",
 		GroupSize:       groupSize,
 		DryRun:          r.FormValue("dry_run") == "on",
+		IDPrefix:        mt.IDPrefix,
+		WriteKind:       mt.WriteKind,
+		TargetPath:      r.FormValue("target_path"),
 	}
 	if err := s.burnMgr.Start(r.Context(), opts); err != nil {
 		s.render(w, "error-fragment", err.Error())

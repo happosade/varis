@@ -53,7 +53,7 @@ func (s *Server) readDisk(w http.ResponseWriter, r *http.Request) {
 	// A NEEDS_RECONSTRUCTION (or FAILED) outcome is still a normal result
 	// the status fragment below knows how to render, so an error here
 	// doesn't fail the request — it's surfaced via job.Err in the fragment.
-	_ = s.retrieveMgr.ReadDisk(r.Context())
+	_ = s.retrieveMgr.ReadDisk(r.Context(), r.FormValue("target_path"))
 	s.renderRetrieveStatus(w)
 }
 
@@ -74,7 +74,7 @@ func (s *Server) readReconstructionDisc(w http.ResponseWriter, r *http.Request) 
 	// Same reasoning as readDisk: the outcome (more discs needed, or a
 	// failure) is rendered via job.Err in the status fragment, not as an
 	// HTTP error.
-	_ = s.retrieveMgr.ReadReconstructionDisc(r.Context(), diskID)
+	_ = s.retrieveMgr.ReadReconstructionDisc(r.Context(), diskID, r.FormValue("target_path"))
 	s.renderRetrieveStatus(w)
 }
 
