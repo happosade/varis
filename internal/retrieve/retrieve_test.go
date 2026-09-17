@@ -76,8 +76,8 @@ func TestManager_ReadDisk_HappyPath(t *testing.T) {
 
 	ex := fakeDiscExecutor(map[string][]byte{
 		"/BD:0001.toc.json": tocBytes,
-		"/BD:0001.tar":       tarBytes,
-		"/BD:0001.tar.par2":  []byte("index"),
+		"/BD:0001.tar":      tarBytes,
+		"/BD:0001.tar.par2": []byte("index"),
 	})
 
 	cat := fakeCatalog{files: map[string]db.FileRecord{
@@ -152,8 +152,8 @@ func TestManager_ReadDisk_FileNotInTarRejected(t *testing.T) {
 
 	ex := fakeDiscExecutor(map[string][]byte{
 		"/BD:0001.toc.json": tocBytes,
-		"/BD:0001.tar":       tarBytes,
-		"/BD:0001.tar.par2":  []byte("index"),
+		"/BD:0001.tar":      tarBytes,
+		"/BD:0001.tar.par2": []byte("index"),
 	})
 
 	cat := fakeCatalog{files: map[string]db.FileRecord{
@@ -257,8 +257,8 @@ func TestManager_ReconstructionFlow_HappyPath(t *testing.T) {
 	reconstructedPath := filepath.Join(scratchDir, "BD:0001.reconstructed.iso")
 	ex := srcAwareDiscExecutor(reconstructedPath, map[string][]byte{
 		"/BD:0001.toc.json": tocBytes,
-		"/BD:0001.tar":       tarBytes,
-		"/BD:0001.tar.par2":  []byte("index"),
+		"/BD:0001.tar":      tarBytes,
+		"/BD:0001.tar.par2": []byte("index"),
 	})
 
 	mgr := NewManager(cat, ex, retrievedDir, scratchDir, device, t.TempDir())
@@ -387,8 +387,8 @@ func TestManager_ReadDisk_DryRunDisc_ReadsFromDryRunPath(t *testing.T) {
 	}
 	ex := srcAwareDiscExecutor(dryRunPath, map[string][]byte{
 		"/BD:0001.toc.json": tocBytes,
-		"/BD:0001.tar":       tarBytes,
-		"/BD:0001.tar.par2":  []byte("index"),
+		"/BD:0001.tar":      tarBytes,
+		"/BD:0001.tar.par2": []byte("index"),
 	})
 
 	mgr := NewManager(cat, ex, retrievedDir, scratchDir, device, dryRunDir)
@@ -439,8 +439,8 @@ func TestManager_ReadReconstructionDisc_DryRunMemberReadsFromDryRunPath(t *testi
 	dryRunParityPath := filepath.Join(dryRunDir, "BD:0002.iso")
 	ex := srcAwareDiscExecutor(reconstructedPath, map[string][]byte{
 		"/BD:0001.toc.json": tocBytes,
-		"/BD:0001.tar":       tarBytes,
-		"/BD:0001.tar.par2":  []byte("index"),
+		"/BD:0001.tar":      tarBytes,
+		"/BD:0001.tar.par2": []byte("index"),
 	})
 
 	mgr := NewManager(cat, ex, retrievedDir, scratchDir, device, dryRunDir)
