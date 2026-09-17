@@ -8,7 +8,7 @@
 <input type="search" name="q" placeholder="Search files…"
        hx-get="/search" hx-trigger="keyup changed delay:300ms" hx-target="#results">
 <table>
-  <thead><tr><th>File</th><th>Size</th><th>Disc</th><th>Tags</th><th></th></tr></thead>
+  <thead><tr><th>File</th><th>Size</th><th>Disc</th><th>Tags / description</th><th></th></tr></thead>
   <tbody id="results">
   {{template "search-rows" .}}
   </tbody>

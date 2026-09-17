@@ -35,6 +35,38 @@ func TestSearch_EmptyQueryReturnsNoRows(t *testing.T) {
 	}
 }
 
+// TestSearchRows_Renders executes (not just parses) the real embedded
+// "search-rows" template — html/template.Parse alone accepts a reference
+// to a field that doesn't exist on db.FileRecord; only Execute catches
+// that, so this is what actually protects the Library page from a silent
+// runtime 500 on a field rename. It also verifies tag/description HTML
+// escaping, mirroring TestStagingFilesFragment_Renders in staging_test.go.
+func TestSearchRows_Renders(t *testing.T) {
+	tmpl, err := template.ParseFS(templatesFS, "templates/*.html")
+	if err != nil {
+		t.Fatalf("parsing embedded templates: %v", err)
+	}
+	files := []db.FileRecord{
+		{ID: "f1", OriginalPath: "photo.jpg", SizeBytes: 5, DiskID: "BD:0001"},
+		{ID: "f2", OriginalPath: "video.mp4", SizeBytes: 9, DiskID: "BD:0002",
+			Tags: []string{"<b>family</b>"}, Description: "a trip"},
+	}
+	var buf strings.Builder
+	if err := tmpl.ExecuteTemplate(&buf, "search-rows", files); err != nil {
+		t.Fatalf("executing search-rows: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "<b>family</b>") {
+		t.Error("expected the tag's HTML-special characters to be escaped, found them raw")
+	}
+	if !strings.Contains(out, "&lt;b&gt;family&lt;/b&gt;") {
+		t.Errorf("expected the escaped tag text in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "photo.jpg") || !strings.Contains(out, "video.mp4") {
+		t.Errorf("expected both files' paths in output, got:\n%s", out)
+	}
+}
+
 // stubCataloger/stubCatalog below are minimal Cataloger/Catalog
 // implementations that always succeed, just enough to get a Manager into
 // a non-DONE/FAILED state for these lock tests — they don't need to
