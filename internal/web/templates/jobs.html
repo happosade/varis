@@ -1,9 +1,9 @@
 {{define "jobs-fragment"}}
 {{if .}}
-<p>Disc {{.CurrentIndex1}}/{{.TotalDiscs}} — state: {{.State}}{{if .Err}} — error: {{.Err}}{{end}}</p>
+<p>{{if .DryRun}}<strong>[DRY RUN]</strong> {{end}}Disc {{.CurrentIndex1}}/{{.TotalDiscs}} — state: {{.State}}{{if .Err}} — error: {{.Err}}{{end}}</p>
 {{if eq .State "AWAITING_DISC"}}
   <form hx-post="/jobs/continue" hx-target="#job-status" hx-swap="innerHTML">
-    <button type="submit">Insert blank disc, continue</button>
+    <button type="submit">{{if .DryRun}}Continue (dry run — no disc needed){{else}}Insert blank disc, continue{{end}}</button>
   </form>
 {{end}}
 {{if eq .State "FAILED"}}

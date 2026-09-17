@@ -56,3 +56,16 @@ func TestJobViewFromJob_IndexClamp(t *testing.T) {
 		})
 	}
 }
+
+func TestJobViewFromJob_ExposesDryRun(t *testing.T) {
+	job := &burn.Job{
+		Options:      burn.Options{DryRun: true},
+		Plans:        []burn.DiscPlan{{DiskID: "BD:0001"}},
+		CurrentIndex: 0,
+		State:        burn.StateAwaitingDisc,
+	}
+	got := jobViewFromJob(job)
+	if !got.DryRun {
+		t.Error("expected jobViewFromJob to expose DryRun = true from job.Options.DryRun")
+	}
+}

@@ -18,6 +18,7 @@ type jobView struct {
 	CurrentIndex1 int
 	TotalDiscs    int
 	CurrentDiskID string
+	DryRun        bool
 }
 
 func (s *Server) currentJobView() *jobView {
@@ -42,6 +43,7 @@ func jobViewFromJob(job *burn.Job) *jobView {
 		CurrentIndex1: job.CurrentIndex + 1,
 		TotalDiscs:    len(job.Plans),
 		CurrentDiskID: job.Plans[idx].DiskID,
+		DryRun:        job.Options.DryRun,
 	}
 }
 
@@ -74,6 +76,7 @@ func (s *Server) startBurn(w http.ResponseWriter, r *http.Request) {
 		Compress:        r.FormValue("compress") == "on",
 		CrossDiscParity: r.FormValue("cross_disc_parity") == "on",
 		GroupSize:       groupSize,
+		DryRun:          r.FormValue("dry_run") == "on",
 	}
 	if err := s.burnMgr.Start(r.Context(), opts); err != nil {
 		s.render(w, "error-fragment", err.Error())
