@@ -583,3 +583,49 @@ func TestManager_ContinueNextDisc_ConcurrentCallsRunExactlyOnce(t *testing.T) {
 		t.Fatalf("Disks = %+v, want exactly 1", cat.Disks)
 	}
 }
+
+func TestManager_BurnsGroupWithParityDisc(t *testing.T) {
+	staging := t.TempDir()
+	spool := t.TempDir()
+	device := filepath.Join(t.TempDir(), "device")
+	writeStagingFile(t, staging, "a.bin", strings.Repeat("A", 60))
+	writeStagingFile(t, staging, "b.bin", strings.Repeat("B", 60))
+
+	cat := newFakeCataloger()
+	ex := fakeExecutorForHappyPath(device)
+	mgr := NewManager(cat, ex, staging, spool, device)
+	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
+
+	opts := Options{
+		MediaType:       "BD-R",
+		CapacityBytes:   70, // 1 file per data disc
+		ParityPercent:   10,
+		CrossDiscParity: true,
+		GroupSize:       2,
+	}
+	if err := mgr.Start(context.Background(), opts); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// 2 data discs + 1 parity disc for the group.
+	for i := 0; i < 3; i++ {
+		if err := mgr.ContinueNextDisc(context.Background()); err != nil {
+			t.Fatalf("ContinueNextDisc[%d]: %v (job err: %v)", i, err, mgr.Current().Err)
+		}
+	}
+
+	job := mgr.Current()
+	if job.State != StateDone {
+		t.Fatalf("State = %s, want DONE", job.State)
+	}
+
+	var parityDisks int
+	for _, d := range cat.Disks {
+		if d.Role == "parity" {
+			parityDisks++
+		}
+	}
+	if parityDisks != 1 {
+		t.Fatalf("parityDisks = %d, want 1 (got disks: %+v)", parityDisks, cat.Disks)
+	}
+}

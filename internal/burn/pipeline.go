@@ -15,6 +15,7 @@ import (
 	"varis/internal/db"
 	"varis/internal/execx"
 	"varis/internal/toc"
+	"varis/internal/xordisk"
 )
 
 type State string
@@ -286,10 +287,6 @@ func (m *Manager) setState(job *Job, s State) {
 }
 
 func (m *Manager) runDisc(ctx context.Context, job *Job, plan DiscPlan) error {
-	if plan.Role != "data" {
-		return fmt.Errorf("runDisc: role %q not supported (cross-disc parity discs are burned via plan 02's extension)", plan.Role)
-	}
-
 	tarPath := filepath.Join(m.spoolDir, plan.DiskID+".tar")
 	tocPath := filepath.Join(m.spoolDir, plan.DiskID+".toc.json")
 	isoPath := filepath.Join(m.spoolDir, plan.DiskID+".iso")
@@ -310,8 +307,17 @@ func (m *Manager) runDisc(ctx context.Context, job *Job, plan DiscPlan) error {
 	}
 
 	m.setState(job, StatePacking)
-	if err := WriteTar(m.stagingDir, plan.Bucket, tarPath, job.Options.Compress); err != nil {
-		return fmt.Errorf("packing: %w", err)
+	switch plan.Role {
+	case "data":
+		if err := WriteTar(m.stagingDir, plan.Bucket, tarPath, job.Options.Compress); err != nil {
+			return fmt.Errorf("packing: %w", err)
+		}
+	case "parity":
+		if err := m.buildParityPayload(job, plan, tarPath); err != nil {
+			return fmt.Errorf("building parity payload: %w", err)
+		}
+	default:
+		return fmt.Errorf("runDisc: unknown role %q", plan.Role)
 	}
 
 	m.setState(job, StateParity)
@@ -323,7 +329,9 @@ func (m *Manager) runDisc(ctx context.Context, job *Job, plan DiscPlan) error {
 		DiskID:        plan.DiskID,
 		MediaType:     job.Options.MediaType,
 		ParityPercent: job.Options.ParityPercent,
+		GroupID:       plan.GroupID,
 		Role:          plan.Role,
+		SlotIndex:     plan.SlotIndex,
 		CreatedAt:     time.Now(),
 	}
 	for _, f := range plan.Bucket.Files {
@@ -368,6 +376,42 @@ func (m *Manager) runDisc(ctx context.Context, job *Job, plan DiscPlan) error {
 	return nil
 }
 
+// buildParityPayload XORs the already-burned data discs' ISO images in
+// plan's group together and writes the result to destPath. It relies on
+// each data disc's ISO still being present in the spool dir under
+// "<diskID>.iso" — runDisc never deletes ISOs, only movePathsInto's
+// per-file inputs, so this holds for any parity disc processed in the
+// same job right after its group's data discs.
+//
+// Every image is padded (or truncated) to job.Options.CapacityBytes — the
+// disc's full nominal capacity — rather than to the largest actual ISO
+// size. This is deliberate, not an approximation: at reconstruction time
+// the missing disc's real size is exactly what's unknown, so the only
+// length both sides can agree on without it is the fixed, known-in-advance
+// media capacity. The cost is that a parity disc's payload is as large as
+// a full disc's capacity even though the actual data on each member disc
+// is normally much smaller (mostly zero padding) — an acceptable trade
+// for correct reconstruction regardless of which member is lost.
+func (m *Manager) buildParityPayload(job *Job, plan DiscPlan, destPath string) error {
+	var images [][]byte
+	for _, p := range job.Plans {
+		if p.GroupID != plan.GroupID || p.Role != "data" {
+			continue
+		}
+		isoPath := filepath.Join(m.spoolDir, p.DiskID+".iso")
+		data, err := os.ReadFile(isoPath)
+		if err != nil {
+			return fmt.Errorf("reading data disc image %s: %w", p.DiskID, err)
+		}
+		images = append(images, data)
+	}
+	if len(images) == 0 {
+		return fmt.Errorf("no data discs found for group %s", plan.GroupID)
+	}
+	parity := xordisk.XOR(images, job.Options.CapacityBytes)
+	return os.WriteFile(destPath, parity, 0o644)
+}
+
 // removeStaleArtifacts clears any spool files/dirs left over from a prior,
 // partially-completed attempt at the same DiskID (e.g. a failure mid-PARITY
 // leaves tarPath+".par2" behind before the ISO-stage move). Real par2create
@@ -398,11 +442,20 @@ func movePathsInto(destDir string, paths ...string) error {
 }
 
 func (m *Manager) commitDisc(ctx context.Context, job *Job, plan DiscPlan, isoHash string) error {
+	var groupID *string
+	var slotIndex *int
+	if plan.GroupID != "" {
+		groupID = &plan.GroupID
+		slotIndex = &plan.SlotIndex
+	}
+
 	err := m.cat.InsertDisk(ctx, db.Disk{
 		ID:            plan.DiskID,
 		MediaType:     job.Options.MediaType,
 		ParityPercent: job.Options.ParityPercent,
+		GroupID:       groupID,
 		Role:          plan.Role,
+		SlotIndex:     slotIndex,
 		ISOHash:       isoHash,
 	})
 	if err != nil {
