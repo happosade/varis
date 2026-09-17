@@ -31,9 +31,9 @@ const (
 )
 
 // Options configures one burn job — the exact inputs exposed on the
-// dashboard (spec §4/§5). CrossDiscParity/GroupSize are read by plan 02's
-// extension of planJob; this plan's planJob ignores them and always
-// produces "data" role discs.
+// dashboard (spec §4/§5). When CrossDiscParity is set, planJob groups data
+// discs into GroupSize-sized groups and appends a "parity" role DiscPlan
+// per group.
 type Options struct {
 	MediaType       string
 	CapacityBytes   int64
@@ -65,7 +65,7 @@ type Job struct {
 // NewDBCataloger (backed by Postgres); tests use an in-memory fake so the
 // state machine can be tested without a live database.
 type Cataloger interface {
-	NextDiskID(ctx context.Context, prefix string) (string, error)
+	NextDiskID(ctx context.Context, prefix string, alreadyAllocated int) (string, error)
 	NewBurnJobID(ctx context.Context) (string, error)
 	NextGroupID(ctx context.Context, burnJobID string, groupSize int) (string, error)
 	InsertDisk(ctx context.Context, d db.Disk) error
@@ -145,12 +145,14 @@ func planJob(ctx context.Context, stagingDir string, opts Options, cat Cataloger
 	buckets := binpack.Pack(files, target)
 
 	prefix := mediaPrefix(opts.MediaType)
+	allocated := map[string]int{}
 	var plans []DiscPlan
 	for _, b := range buckets {
-		id, err := cat.NextDiskID(ctx, prefix)
+		id, err := cat.NextDiskID(ctx, prefix, allocated[prefix])
 		if err != nil {
 			return nil, err
 		}
+		allocated[prefix]++
 		plans = append(plans, DiscPlan{DiskID: id, Role: "data", Bucket: b})
 	}
 
@@ -159,7 +161,7 @@ func planJob(ctx context.Context, stagingDir string, opts Options, cat Cataloger
 	}
 
 	groupSize := opts.GroupSize
-	if groupSize <= 0 {
+	if groupSize <= 1 {
 		groupSize = 10
 	}
 
@@ -183,10 +185,11 @@ func planJob(ctx context.Context, stagingDir string, opts Options, cat Cataloger
 			p.SlotIndex = i
 			withGroups = append(withGroups, p)
 		}
-		parityID, err := cat.NextDiskID(ctx, prefix)
+		parityID, err := cat.NextDiskID(ctx, prefix, allocated[prefix])
 		if err != nil {
 			return nil, err
 		}
+		allocated[prefix]++
 		withGroups = append(withGroups, DiscPlan{
 			DiskID:    parityID,
 			Role:      "parity",
@@ -433,8 +436,8 @@ type pgxCataloger struct{ pool *pgxpool.Pool }
 // NewDBCataloger adapts a *pgxpool.Pool to the Cataloger interface.
 func NewDBCataloger(pool *pgxpool.Pool) Cataloger { return pgxCataloger{pool: pool} }
 
-func (c pgxCataloger) NextDiskID(ctx context.Context, prefix string) (string, error) {
-	return db.NextDiskID(ctx, c.pool, prefix)
+func (c pgxCataloger) NextDiskID(ctx context.Context, prefix string, alreadyAllocated int) (string, error) {
+	return db.NextDiskID(ctx, c.pool, prefix, alreadyAllocated)
 }
 func (c pgxCataloger) NewBurnJobID(ctx context.Context) (string, error) {
 	var id string

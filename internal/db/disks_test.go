@@ -12,7 +12,7 @@ func TestDiskLifecycle(t *testing.T) {
 		t.Fatalf("SeedMediaTypes: %v", err)
 	}
 
-	id, err := NextDiskID(ctx, pool, "BDTEST")
+	id, err := NextDiskID(ctx, pool, "BDTEST", 0)
 	if err != nil {
 		t.Fatalf("NextDiskID: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestDiskLifecycle(t *testing.T) {
 		t.Errorf("GetDisk = %+v, want ParityPercent=10 Role=data", got)
 	}
 
-	id2, err := NextDiskID(ctx, pool, "BDTEST")
+	id2, err := NextDiskID(ctx, pool, "BDTEST", 0)
 	if err != nil {
 		t.Fatalf("NextDiskID: %v", err)
 	}

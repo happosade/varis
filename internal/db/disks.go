@@ -30,9 +30,13 @@ func InsertDiskGroup(ctx context.Context, pool *pgxpool.Pool, burnJobID string, 
 }
 
 // NextDiskID returns the next sequential ID for a media-type prefix, e.g. "BD:0007".
-// Safe without locking here because the burn pipeline (see plan 01) only ever
-// runs one job at a time.
-func NextDiskID(ctx context.Context, pool *pgxpool.Pool, prefix string) (string, error) {
+// alreadyAllocated is the number of IDs already handed out for this prefix
+// earlier in the same planning pass but not yet inserted into the DB (see
+// planJob, which calls this once per disc in a job before any of them are
+// burned/inserted) — without it, every call within one pass would see the
+// same DB count and return the same ID. Safe without locking here because
+// the burn pipeline (see plan 01) only ever runs one job at a time.
+func NextDiskID(ctx context.Context, pool *pgxpool.Pool, prefix string, alreadyAllocated int) (string, error) {
 	var count int
 	err := pool.QueryRow(ctx,
 		`SELECT count(*) FROM disks WHERE id LIKE $1`,
@@ -40,7 +44,7 @@ func NextDiskID(ctx context.Context, pool *pgxpool.Pool, prefix string) (string,
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s:%04d", prefix, count+1), nil
+	return fmt.Sprintf("%s:%04d", prefix, count+alreadyAllocated+1), nil
 }
 
 func InsertDisk(ctx context.Context, pool *pgxpool.Pool, d Disk) error {

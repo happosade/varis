@@ -28,7 +28,7 @@ func newFakeCataloger() *FakeCataloger {
 	return &FakeCataloger{seq: map[string]int{}}
 }
 
-func (f *FakeCataloger) NextDiskID(ctx context.Context, prefix string) (string, error) {
+func (f *FakeCataloger) NextDiskID(ctx context.Context, prefix string, alreadyAllocated int) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.seq[prefix]++
@@ -375,6 +375,153 @@ func TestPlanJob_GroupsDataDiscsAndAddsParityDiscs(t *testing.T) {
 	}
 	if len(groupIDs) != 3 {
 		t.Fatalf("distinct groups = %d, want 3", len(groupIDs))
+	}
+}
+
+func TestPlanJob_ExactMultipleOfGroupSizeHasNoRemainderGroup(t *testing.T) {
+	staging := t.TempDir()
+	for i := 0; i < 4; i++ {
+		writeStagingFile(t, staging, fmt.Sprintf("f%d.bin", i), strings.Repeat("x", 100))
+	}
+	cat := newFakeCataloger()
+
+	opts := Options{
+		MediaType:       "BD-R",
+		CapacityBytes:   150,
+		ParityPercent:   10,
+		CrossDiscParity: true,
+		GroupSize:       2,
+	}
+
+	plans, err := planJob(context.Background(), staging, opts, cat)
+	if err != nil {
+		t.Fatalf("planJob: %v", err)
+	}
+
+	var dataCount, parityCount int
+	groupIDs := map[string]bool{}
+	for _, p := range plans {
+		if p.Role == "data" {
+			dataCount++
+			groupIDs[p.GroupID] = true
+		} else {
+			parityCount++
+		}
+	}
+	if dataCount != 4 {
+		t.Fatalf("dataCount = %d, want 4", dataCount)
+	}
+	// 4 data discs, group size 2 -> groups of [2,2] -> exactly 2 parity discs.
+	if parityCount != 2 {
+		t.Fatalf("parityCount = %d, want 2", parityCount)
+	}
+	if len(groupIDs) != 2 {
+		t.Fatalf("distinct groups = %d, want 2", len(groupIDs))
+	}
+}
+
+func TestPlanJob_GroupSizeZeroDefaultsToTen(t *testing.T) {
+	staging := t.TempDir()
+	for i := 0; i < 3; i++ {
+		writeStagingFile(t, staging, fmt.Sprintf("f%d.bin", i), strings.Repeat("x", 100))
+	}
+	cat := newFakeCataloger()
+
+	opts := Options{
+		MediaType:       "BD-R",
+		CapacityBytes:   150,
+		ParityPercent:   10,
+		CrossDiscParity: true,
+		GroupSize:       0,
+	}
+
+	plans, err := planJob(context.Background(), staging, opts, cat)
+	if err != nil {
+		t.Fatalf("planJob: %v", err)
+	}
+
+	var dataCount, parityCount int
+	groupIDs := map[string]bool{}
+	for _, p := range plans {
+		if p.Role == "data" {
+			dataCount++
+			groupIDs[p.GroupID] = true
+		} else {
+			parityCount++
+		}
+	}
+	if dataCount != 3 {
+		t.Fatalf("dataCount = %d, want 3", dataCount)
+	}
+	// GroupSize 0 defaults to 10, so all 3 data discs land in one group.
+	if parityCount != 1 {
+		t.Fatalf("parityCount = %d, want 1", parityCount)
+	}
+	if len(groupIDs) != 1 {
+		t.Fatalf("distinct groups = %d, want 1", len(groupIDs))
+	}
+}
+
+// countBasedCataloger mimics the real db.NextDiskID's behavior: NextDiskID
+// bases its suffix purely on how many disks with that prefix have actually
+// been inserted so far (like `count(*) FROM disks WHERE id LIKE ...`), not
+// on how many IDs this cataloger has handed out. Since planJob never calls
+// InsertDisk during planning (that only happens later, per-disc, in
+// commitDisc as each disc finishes burning), insertedByPrefix stays 0
+// throughout a planning pass — exactly the scenario that caused every
+// NextDiskID call in one planJob invocation to collide on the same ID
+// before alreadyAllocated was threaded through.
+type countBasedCataloger struct {
+	insertedByPrefix map[string]int
+}
+
+func (c *countBasedCataloger) NextDiskID(ctx context.Context, prefix string, alreadyAllocated int) (string, error) {
+	return fmt.Sprintf("%s:%04d", prefix, c.insertedByPrefix[prefix]+alreadyAllocated+1), nil
+}
+func (c *countBasedCataloger) NewBurnJobID(ctx context.Context) (string, error) {
+	return "burnjob-1", nil
+}
+func (c *countBasedCataloger) NextGroupID(ctx context.Context, burnJobID string, groupSize int) (string, error) {
+	return "group-1", nil
+}
+func (c *countBasedCataloger) InsertDisk(ctx context.Context, d db.Disk) error       { return nil }
+func (c *countBasedCataloger) InsertFile(ctx context.Context, f db.FileRecord) error { return nil }
+
+// TestPlanJob_AllocatesDistinctDiskIDsWithinOnePlanningPass is a regression
+// test for a bug where planJob asked a count(*)-based Cataloger for one
+// DiskID per disc in a job without ever inserting anything in between
+// (InsertDisk happens later, one disc at a time, as each disc actually
+// finishes burning) — every call within the same planning pass saw the same
+// DB count and returned the identical DiskID for every disc, which would
+// fail with a primary-key violation on the second InsertDisk of a real
+// multi-disc burn. FakeCataloger's own incrementing counter doesn't model
+// this, so it can't catch the regression; countBasedCataloger does.
+func TestPlanJob_AllocatesDistinctDiskIDsWithinOnePlanningPass(t *testing.T) {
+	staging := t.TempDir()
+	for i := 0; i < 4; i++ {
+		writeStagingFile(t, staging, fmt.Sprintf("f%d.bin", i), strings.Repeat("x", 100))
+	}
+	cat := &countBasedCataloger{insertedByPrefix: map[string]int{}}
+
+	opts := Options{MediaType: "BD-R", CapacityBytes: 150, ParityPercent: 10}
+	plans, err := planJob(context.Background(), staging, opts, cat)
+	if err != nil {
+		t.Fatalf("planJob: %v", err)
+	}
+	if len(plans) != 4 {
+		t.Fatalf("len(plans) = %d, want 4", len(plans))
+	}
+
+	seen := map[string]bool{}
+	for i, p := range plans {
+		if seen[p.DiskID] {
+			t.Fatalf("plan[%d].DiskID = %q is a duplicate", i, p.DiskID)
+		}
+		seen[p.DiskID] = true
+		want := fmt.Sprintf("BD:%04d", i+1)
+		if p.DiskID != want {
+			t.Errorf("plan[%d].DiskID = %q, want %q", i, p.DiskID, want)
+		}
 	}
 }
 
