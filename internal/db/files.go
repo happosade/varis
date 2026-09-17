@@ -50,8 +50,9 @@ func GetFile(ctx context.Context, pool *pgxpool.Pool, id string) (FileRecord, er
 // array_ops index, which serves containment queries (tags @> ARRAY[...])
 // but can't accelerate a substring match against tag text, so tags are
 // matched via a plain ILIKE against the joined tag text instead of the
-// index. Acceptable at this project's single-user, tens-of-thousands-of
-// -files scale (see design spec §7); revisit if that changes.
+// index — also bypassing the trigram index original_path alone used to
+// get. Acceptable at this project's single-user, home-archive scale
+// (tens of thousands of files, not millions); revisit if that changes.
 func SearchFiles(ctx context.Context, pool *pgxpool.Pool, query string) ([]FileRecord, error) {
 	rows, err := pool.Query(ctx,
 		`SELECT id, disk_id, original_path, size_bytes, file_hash, tags, description FROM files

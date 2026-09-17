@@ -134,10 +134,22 @@ SELECT id, disk_id, original_path, size_bytes, file_hash, tags, description
 FROM files
 WHERE original_path ILIKE '%' || $1 || '%'
    OR description ILIKE '%' || $1 || '%'
-   OR EXISTS (SELECT 1 FROM unnest(tags) t WHERE t ILIKE '%' || $1 || '%')
-ORDER BY similarity(original_path, $1) DESC
+   OR array_to_string(tags, ' ') ILIKE '%' || $1 || '%'
+ORDER BY GREATEST(
+    similarity(original_path, $1),
+    similarity(description, $1),
+    similarity(array_to_string(tags, ' '), $1)
+) DESC
 LIMIT 50
 ```
+
+(Implementation note: this is a deliberate full scan, not an indexed
+lookup — `idx_files_tags`'s GIN `array_ops` index serves containment
+queries, not substring matching against tag text, and matching tags this
+way also bypasses the trigram index `original_path` alone used to get.
+Acceptable at this project's single-user, home-archive scale. Ranking
+uses `GREATEST` across all three fields so a tag- or description-only
+match isn't sorted below every path match and discarded by `LIMIT 50`.)
 
 Same search box, same endpoint (`GET /search?q=`) — searching "family
 videos 2019" now matches a file tagged that way even if the tag never
