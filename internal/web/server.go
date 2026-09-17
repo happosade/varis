@@ -20,14 +20,15 @@ type Server struct {
 	retrieveMgr *retrieve.Manager
 	tmpl        *template.Template
 	stagingDir  string
+	dryRunDir   string
 }
 
-func NewServer(pool *pgxpool.Pool, burnMgr *burn.Manager, retrieveMgr *retrieve.Manager, stagingDir string) (*Server, error) {
+func NewServer(pool *pgxpool.Pool, burnMgr *burn.Manager, retrieveMgr *retrieve.Manager, stagingDir, dryRunDir string) (*Server, error) {
 	tmpl, err := template.ParseFS(templatesFS, "templates/*.html")
 	if err != nil {
 		return nil, err
 	}
-	return &Server{pool: pool, burnMgr: burnMgr, retrieveMgr: retrieveMgr, tmpl: tmpl, stagingDir: stagingDir}, nil
+	return &Server{pool: pool, burnMgr: burnMgr, retrieveMgr: retrieveMgr, tmpl: tmpl, stagingDir: stagingDir, dryRunDir: dryRunDir}, nil
 }
 
 func (s *Server) Routes(mux *http.ServeMux) {
@@ -49,4 +50,7 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /config", s.addMediaType)
 
 	mux.HandleFunc("GET /cover/{diskID}", s.cover)
+
+	mux.HandleFunc("GET /dryruns", s.dryRunsPage)
+	mux.HandleFunc("POST /dryruns/delete", s.deleteDryRun)
 }

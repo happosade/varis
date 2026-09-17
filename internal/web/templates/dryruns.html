@@ -1,0 +1,32 @@
+{{define "dryruns"}}
+<!doctype html>
+<html>
+<head>{{template "head"}}</head>
+<body>
+{{template "nav"}}
+<h1>Dry Runs</h1>
+<p>These are test ISOs, not physical discs. Inspect them at
+<code>/webdav/dryrun/</code>, or delete one below once you're done with it
+— that removes both the ISO file and its catalog entry.</p>
+<table>
+  <thead><tr><th>Disk ID</th><th>Media type</th><th>Created</th><th>ISO</th><th></th></tr></thead>
+  <tbody>
+  {{range .}}
+  <tr>
+    <td>{{.ID}}</td>
+    <td>{{.MediaType}}</td>
+    <td>{{.CreatedAt}}</td>
+    <td><a href="/webdav/dryrun/{{.ID}}.iso">{{.ID}}.iso</a></td>
+    <td>
+      <form method="post" action="/dryruns/delete">
+        <input type="hidden" name="disk_id" value="{{.ID}}">
+        <button type="submit">Delete</button>
+      </form>
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</body>
+</html>
+{{end}}

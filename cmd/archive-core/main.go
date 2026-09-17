@@ -35,7 +35,7 @@ func main() {
 	burnMgr := burn.NewManager(burn.NewDBCataloger(pool), ex, cfg.StagingDir, cfg.SpoolDir, cfg.OpticalDevice, cfg.DryRunDir)
 	retrieveMgr := retrieve.NewManager(retrieve.NewDBCatalog(pool), ex, cfg.RetrievedDir, scratchDir, cfg.OpticalDevice, cfg.DryRunDir)
 
-	webServer, err := web.NewServer(pool, burnMgr, retrieveMgr, cfg.StagingDir)
+	webServer, err := web.NewServer(pool, burnMgr, retrieveMgr, cfg.StagingDir, cfg.DryRunDir)
 	if err != nil {
 		log.Fatalf("web server: %v", err)
 	}
