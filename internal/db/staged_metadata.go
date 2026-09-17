@@ -21,6 +21,7 @@ type StagedMetadata struct {
 // values, regardless of what a path held before.
 func UpsertStagedMetadata(ctx context.Context, pool *pgxpool.Pool, path string, tags []string, description string) error {
 	if tags == nil {
+		// A nil slice encodes as SQL NULL, which tags (NOT NULL) rejects.
 		tags = []string{}
 	}
 	_, err := pool.Exec(ctx,

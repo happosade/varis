@@ -40,6 +40,12 @@ func TestUpsertAndListStagedMetadata(t *testing.T) {
 	if len(got.Tags) != 1 || got.Tags[0] != "work" || got.Description != "" {
 		t.Errorf("after replace, got = %+v, want Tags=[work] Description=\"\"", got)
 	}
+
+	// A nil tags slice (e.g. clearing tags while keeping a description)
+	// must not violate the NOT NULL constraint on staged_metadata.tags.
+	if err := UpsertStagedMetadata(ctx, pool, "test-upsert/nil.jpg", nil, "desc only"); err != nil {
+		t.Fatalf("UpsertStagedMetadata with nil tags: %v", err)
+	}
 }
 
 func TestConsumeStagedMetadata(t *testing.T) {
