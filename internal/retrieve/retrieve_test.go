@@ -129,6 +129,48 @@ func TestManager_ReadDisk_WrongDiscRejected(t *testing.T) {
 	}
 }
 
+// TestManager_ReadDisk_FileNotInTarRejected exercises the second
+// StateFailed exception in readFrom: the TOC matches and the tar's parity
+// verifies fine (i.e. the disc itself is intact), but the requested
+// file's OriginalPath isn't a member of that tar. Since the tar is proven
+// intact, this is a cataloging/metadata problem, not media damage, so it
+// must land in StateFailed rather than StateNeedsReconstruction.
+func TestManager_ReadDisk_FileNotInTarRejected(t *testing.T) {
+	retrievedDir := t.TempDir()
+	scratchDir := t.TempDir()
+	device := filepath.Join(t.TempDir(), "device")
+
+	tocBytes, _ := toc.TOC{DiskID: "BD:0001", Compressed: false}.Marshal()
+
+	tarPath := filepath.Join(t.TempDir(), "src.tar")
+	writeTarFixture(t, tarPath, map[string]string{"other.jpg": "bytes"})
+	tarBytes, err := os.ReadFile(tarPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ex := fakeDiscExecutor(map[string][]byte{
+		"/BD:0001.toc.json": tocBytes,
+		"/BD:0001.tar":       tarBytes,
+		"/BD:0001.tar.par2":  []byte("index"),
+	})
+
+	cat := fakeCatalog{files: map[string]db.FileRecord{
+		"file1": {ID: "file1", DiskID: "BD:0001", OriginalPath: "photo.jpg"},
+	}}
+
+	mgr := NewManager(cat, ex, retrievedDir, scratchDir, device)
+	if err := mgr.Start(context.Background(), "file1"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := mgr.ReadDisk(context.Background()); err == nil {
+		t.Fatal("expected file-not-found error")
+	}
+	if mgr.Current().State != StateFailed {
+		t.Fatalf("State = %s, want FAILED", mgr.Current().State)
+	}
+}
+
 // writeTarFixture is a tiny local helper using archive/tar directly (not
 // exported from the burn package on purpose — retrieve's tests shouldn't
 // need to import burn just to build a fixture).

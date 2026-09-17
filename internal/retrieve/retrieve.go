@@ -89,10 +89,16 @@ func (m *Manager) ReadDisk(ctx context.Context) error {
 // readFrom routes every failure to one of two outcomes: a disc that's
 // unreadable or fails verification means the *physical media* may be
 // damaged — exactly the case cross-disc parity exists to survive — so
-// those go to StateNeedsReconstruction, not a dead-end StateFailed. Only
-// "you inserted the wrong disc" is a hard failure, since reconstruction
-// can't fix a user simply grabbing the wrong one off the shelf; the fix
-// there is just inserting the right disc and calling ReadDisk again.
+// those go to StateNeedsReconstruction, not a dead-end StateFailed.
+// Two things are hard failures instead: (1) "you inserted the wrong
+// disc", since reconstruction can't fix a user simply grabbing the wrong
+// one off the shelf — the fix there is just inserting the right disc and
+// calling ReadDisk again; and (2) the requested file isn't found inside a
+// tar that has already passed parity verification — at that point the tar
+// itself is proven intact, so a missing member means the file genuinely
+// isn't in the archive (stale/bad metadata, or a real absence), not media
+// damage. Reconstruction would only rebuild the same, still-missing tar,
+// so it can't help here either.
 func (m *Manager) readFrom(ctx context.Context, job *Job, src string) error {
 	workDir, err := os.MkdirTemp(m.scratchDir, "retrieve-")
 	if err != nil {
