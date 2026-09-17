@@ -2,10 +2,16 @@ package web
 
 import (
 	"net/http"
+	"regexp"
 	"strconv"
 
 	"varis/internal/db"
 )
+
+// idPrefixPattern restricts id_prefix to characters safe in a disk ID
+// (fmt.Sprintf("%s:%04d", prefix, n)) and in spool/dry-run filenames built
+// from that disk ID — no "/", ":", or other path/ID-delimiter characters.
+var idPrefixPattern = regexp.MustCompile(`^[A-Za-z0-9]+$`)
 
 func (s *Server) configPage(w http.ResponseWriter, r *http.Request) {
 	types, err := db.ListMediaTypes(r.Context(), s.pool)
@@ -32,8 +38,8 @@ func (s *Server) addMediaType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	idPrefix := r.FormValue("id_prefix")
-	if idPrefix == "" {
-		http.Error(w, "id_prefix is required", http.StatusBadRequest)
+	if !idPrefixPattern.MatchString(idPrefix) {
+		http.Error(w, "id_prefix is required and must contain only letters and digits", http.StatusBadRequest)
 		return
 	}
 	mt := db.MediaType{

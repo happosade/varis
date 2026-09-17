@@ -167,3 +167,24 @@ func (c stubCatalog) MediaCapacity(ctx context.Context, mediaType string) (int64
 func writeFixtureFile(dir, name, content string) error {
 	return os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
 }
+
+// TestDeleteDryRun_RejectsPathTraversalInDiskID guards against disk_id
+// (attacker-controlled form input) being used to build a filesystem path
+// outside dryRunDir — regression test for a path-traversal gap found in
+// code review. No pool/dryRunDir setup needed: the rejection happens
+// before either is touched.
+func TestDeleteDryRun_RejectsPathTraversalInDiskID(t *testing.T) {
+	s := &Server{dryRunDir: t.TempDir()}
+	for _, diskID := range []string{"../../etc/passwd", "a/b", `a\b`, ""} {
+		form := url.Values{"disk_id": {diskID}}
+		r := httptest.NewRequest("POST", "/dryruns/delete", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+
+		s.deleteDryRun(w, r)
+
+		if w.Result().StatusCode != 400 {
+			t.Errorf("disk_id=%q: status = %d, want 400", diskID, w.Result().StatusCode)
+		}
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"varis/internal/db"
 )
@@ -29,6 +30,13 @@ func (s *Server) deleteDryRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	diskID := r.FormValue("disk_id")
+	// disk_id is attacker-controlled input from the form body; a value
+	// containing a path separator (e.g. "../../etc/passwd") would otherwise
+	// let filepath.Join below escape dryRunDir before os.Remove runs.
+	if diskID == "" || strings.ContainsAny(diskID, "/\\") {
+		http.Error(w, "invalid disk_id", http.StatusBadRequest)
+		return
+	}
 	isoPath := filepath.Join(s.dryRunDir, diskID+".iso")
 	if err := os.Remove(isoPath); err != nil && !os.IsNotExist(err) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
