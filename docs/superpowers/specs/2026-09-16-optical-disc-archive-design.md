@@ -32,7 +32,7 @@ against both partial disc bit-rot and total disc loss.
   - `/data/retrieved` — WebDAV output for restored files.
   - `/dev/sr0` — passed through via `devices:` in compose (Linux only).
 - **No authentication.** Trusted home LAN, single user.
-- **Go version:** latest stable (1.23+).
+- **Go version:** latest stable (1.26+).
 - **Routing:** stdlib `net/http` using Go 1.22+ method+wildcard patterns
   (e.g. `mux.HandleFunc("POST /burn", ...)`). No chi/gorilla — the route
   count (~10) doesn't justify a router dependency.
@@ -236,3 +236,14 @@ replacement disc after reconstruction.
   group) and burn a fresh replacement disc, updating the catalog to point
   at the new physical media while preserving the history of the
   replacement.
+- **List staged files on the dashboard:** the To-Archive section currently
+  only shows a total byte count (`webdav.DirSize`); show the actual file
+  listing (name, size, path) so the user can review what's staged before
+  burning, not just how much.
+- **User-defined metadata on staged files/folders:** let the user attach
+  arbitrary metadata (tags, description, date, etc.) to individual files
+  or folders in the staging area, or in bulk across a selection, before
+  burning. Persist this alongside the file record in Postgres so the
+  Library's search (Section 6) can filter/search on it in addition to
+  original path — e.g. tagging a folder "family videos 2019" and later
+  finding it by that tag rather than by filename.

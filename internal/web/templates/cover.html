@@ -1,0 +1,12 @@
+{{define "cover"}}
+<!doctype html>
+<html>
+<head>{{template "head"}}</head>
+<body>
+<h1>{{.Disk.ID}}</h1>
+<p>{{.Disk.MediaType}} — parity {{.Disk.ParityPercent}}% — burned {{.Disk.CreatedAt}}{{if .Disk.IsDryRun}} — <strong>DRY RUN (not a real disc)</strong>{{end}}</p>
+<img src="{{.QRDataURI}}" width="256" height="256" alt="QR code for {{.Disk.ID}}">
+<p>Scan to look up this disc's contents at archive://disk/{{.Disk.ID}}</p>
+</body>
+</html>
+{{end}}

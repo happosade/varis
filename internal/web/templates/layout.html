@@ -1,0 +1,24 @@
+{{define "head"}}
+<meta charset="utf-8">
+<title>Varis Optical Archive</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/htmx/1.9.12/htmx.min.js"></script>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+  nav a { margin-right: 1rem; }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { text-align: left; padding: 0.25rem 0.5rem; border-bottom: 1px solid #ddd; }
+  .error { color: #b00020; }
+  .tag { background: #eee; border-radius: 3px; padding: 0 4px; margin-right: 2px; font-size: 0.85em; }
+</style>
+{{end}}
+
+{{define "nav"}}
+<nav>
+  <a href="/">Dashboard</a>
+  <a href="/library">Library</a>
+  <a href="/dryruns">Dry Runs</a>
+  <a href="/config">Config</a>
+</nav>
+{{end}}
+
+{{define "error-fragment"}}<p class="error">{{.}}</p>{{end}}

@@ -1,0 +1,61 @@
+{{define "library"}}
+<!doctype html>
+<html>
+<head>{{template "head"}}</head>
+<body>
+{{template "nav"}}
+<h1>Library</h1>
+<input type="search" name="q" placeholder="Search files…"
+       hx-get="/search" hx-trigger="keyup changed delay:300ms" hx-target="#results">
+<table>
+  <thead><tr><th>File</th><th>Size</th><th>Disc</th><th>Tags / description</th><th></th></tr></thead>
+  <tbody id="results">
+  {{template "search-rows" .}}
+  </tbody>
+</table>
+<div id="retrieve-status"></div>
+</body>
+</html>
+{{end}}
+
+{{define "search-rows"}}
+{{range .}}
+<tr>
+  <td>{{.OriginalPath}}</td>
+  <td>{{.SizeBytes}}</td>
+  <td>{{.DiskID}}{{if .DiskIsDryRun}} <strong>[DRY RUN]</strong>{{end}}</td>
+  <td>{{range .Tags}}<span class="tag">{{.}}</span>{{end}}{{if .Description}} <em>{{.Description}}</em>{{end}}</td>
+  <td>
+    <form hx-post="/retrieve" hx-target="#retrieve-status" hx-swap="innerHTML">
+      <input type="hidden" name="file_id" value="{{.ID}}">
+      <button type="submit">Get</button>
+    </form>
+  </td>
+</tr>
+{{end}}
+{{end}}
+
+{{define "retrieve-status"}}
+{{if .}}
+<p>File: {{.OriginalPath}} — disc: {{.DiskID}} — state: {{.State}}{{if .Err}} — {{.Err}}{{end}}</p>
+{{if eq .State "AWAITING_MEDIA"}}
+  <form hx-post="/retrieve/read" hx-target="#retrieve-status">
+    <label>Device / target path <input type="text" name="target_path" value="/dev/sr0"></label>
+    <button type="submit">Insert {{.DiskID}}, Read Disk</button>
+  </form>
+{{end}}
+{{if eq .State "NEEDS_RECONSTRUCTION"}}
+  <form hx-post="/retrieve/reconstruct/start" hx-target="#retrieve-status"><button type="submit">Reconstruct from group</button></form>
+{{end}}
+{{if eq .State "RECONSTRUCTING"}}
+  {{range .Remaining}}
+  <form hx-post="/retrieve/reconstruct/read" hx-target="#retrieve-status">
+    <input type="hidden" name="disk_id" value="{{.}}">
+    <label>Device / target path <input type="text" name="target_path" value="/dev/sr0"></label>
+    <button type="submit">Insert {{.}}, Read</button>
+  </form>
+  {{end}}
+{{end}}
+{{if eq .State "DONE"}}<p>Ready in WebDAV under /webdav/retrieved/</p>{{end}}
+{{end}}
+{{end}}

@@ -1,0 +1,26 @@
+{{define "config"}}
+<!doctype html>
+<html>
+<head>{{template "head"}}</head>
+<body>
+{{template "nav"}}
+<h1>Media Types</h1>
+<table>
+  <tr><th>Name</th><th>Capacity (bytes)</th><th>ID prefix</th><th>Write kind</th></tr>
+  {{range .}}<tr><td>{{.Name}}</td><td>{{.CapacityBytes}}</td><td>{{.IDPrefix}}</td><td>{{.WriteKind}}</td></tr>{{end}}
+</table>
+<form method="post" action="/config">
+  <label>Name <input type="text" name="name" required></label>
+  <label>Capacity bytes <input type="number" name="capacity_bytes" required></label>
+  <label>ID prefix <input type="text" name="id_prefix" required placeholder="e.g. BD, RDX, USB"></label>
+  <label>Write kind
+    <select name="write_kind">
+      <option value="optical">optical (burn via wodim)</option>
+      <option value="filesystem">filesystem (plain copy)</option>
+    </select>
+  </label>
+  <button type="submit">Add</button>
+</form>
+</body>
+</html>
+{{end}}

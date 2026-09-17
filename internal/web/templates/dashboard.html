@@ -1,0 +1,68 @@
+{{define "dashboard"}}
+<!doctype html>
+<html>
+<head>{{template "head"}}</head>
+<body>
+{{template "nav"}}
+<h1>To-Archive</h1>
+<p>Mount all archive files over WebDAV at <code>{{.MountURL}}</code> —
+on macOS: Finder → <kbd>Cmd+K</kbd> → Connect to Server → paste that URL.
+Inside, you'll find <code>staging/</code>, <code>retrieved/</code>, and
+<code>dryrun/</code> folders.</p>
+<p>Staged: {{.StagedBytes}} bytes.</p>
+{{template "staging-files-fragment" .StagedFiles}}
+
+<form hx-post="/burn" hx-target="#job-status" hx-swap="innerHTML">
+  <label>Media type
+    <select name="media_type">
+      {{range .MediaTypes}}<option value="{{.Name}}">{{.Name}} ({{.CapacityBytes}} bytes)</option>{{end}}
+    </select>
+  </label>
+  <label>Parity % <input type="number" name="parity_percent" value="10" min="5" max="50"></label>
+  <label><input type="checkbox" name="compress"> Compress</label>
+  <label><input type="checkbox" name="cross_disc_parity"> Add cross-disc recovery disc</label>
+  <label>Group size <input type="number" name="group_size" value="10" min="2"></label>
+  <label>Device / target path <input type="text" name="target_path" value="/dev/sr0"></label>
+  <label><input type="checkbox" name="dry_run"> Dry run (produce an ISO only, don't burn)</label>
+  <button type="submit">Burn</button>
+</form>
+
+<div id="job-status" hx-get="/jobs" hx-trigger="load, every 2s">
+  {{template "jobs-fragment" .Job}}
+</div>
+</body>
+</html>
+{{end}}
+
+{{define "staging-files-fragment"}}
+<div id="staging-files">
+<form hx-post="/staging/metadata" hx-target="#staging-files" hx-swap="outerHTML">
+{{range .}}
+  <details open>
+    {{if .Name}}
+    <summary><label onclick="event.stopPropagation()"><input type="checkbox" name="path" value="{{.Name}}/"> {{.Name}}/</label></summary>
+    {{else}}
+    <summary>(root)</summary>
+    {{end}}
+    <table>
+      <thead><tr><th></th><th>File</th><th>Size</th><th>Tags</th><th>Description</th></tr></thead>
+      <tbody>
+      {{range .Files}}
+      <tr>
+        <td><input type="checkbox" name="path" value="{{.Path}}"></td>
+        <td>{{.Path}}</td>
+        <td>{{.Size}}</td>
+        <td>{{range .Tags}}<span class="tag">{{.}}</span>{{end}}</td>
+        <td>{{.Description}}</td>
+      </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </details>
+{{end}}
+  <label>Tags (comma-separated) <input type="text" name="tags"></label>
+  <label>Description <input type="text" name="description"></label>
+  <button type="submit">Apply to selected</button>
+</form>
+</div>
+{{end}}
