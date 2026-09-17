@@ -174,10 +174,10 @@ func TestManager_HappyPath_SingleDisc(t *testing.T) {
 
 	cat := newFakeCataloger()
 	ex := fakeExecutorForHappyPath(device)
-	mgr := NewManager(cat, ex, staging, spool, device, t.TempDir())
+	mgr := NewManager(cat, ex, staging, spool, t.TempDir())
 	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil } // 1TB, plenty
 
-	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}
+	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10, IDPrefix: "BD", TargetPath: device}
 	if err := mgr.Start(context.Background(), opts); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -216,10 +216,10 @@ func TestManager_MultiDiscJob_BurnsSequentially(t *testing.T) {
 
 	cat := newFakeCataloger()
 	ex := fakeExecutorForHappyPath(device)
-	mgr := NewManager(cat, ex, staging, spool, device, t.TempDir())
+	mgr := NewManager(cat, ex, staging, spool, t.TempDir())
 	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
 
-	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}
+	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10, IDPrefix: "BD", TargetPath: device}
 	if err := mgr.Start(context.Background(), opts); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -275,10 +275,10 @@ func TestManager_FailedStepLeavesStagingUntouchedAndAllowsRetry(t *testing.T) {
 	ex.Funcs["wodim"] = func(args []string) execx.Result {
 		return execx.Result{Err: fmt.Errorf("burn failed: bad disc")}
 	}
-	mgr := NewManager(cat, ex, staging, spool, device, t.TempDir())
+	mgr := NewManager(cat, ex, staging, spool, t.TempDir())
 	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
 
-	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}
+	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10, IDPrefix: "BD", TargetPath: device}
 	if err := mgr.Start(context.Background(), opts); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -312,10 +312,10 @@ func TestManager_RejectsSecondJobWhileOneInProgress(t *testing.T) {
 	device := filepath.Join(t.TempDir(), "device")
 	writeStagingFile(t, staging, "photo.jpg", "some bytes")
 
-	mgr := NewManager(newFakeCataloger(), fakeExecutorForHappyPath(device), staging, spool, device, t.TempDir())
+	mgr := NewManager(newFakeCataloger(), fakeExecutorForHappyPath(device), staging, spool, t.TempDir())
 	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
 
-	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}
+	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10, IDPrefix: "BD", TargetPath: device}
 	if err := mgr.Start(context.Background(), opts); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -330,10 +330,10 @@ func TestManager_RejectsWhenNotEnoughFreeSpace(t *testing.T) {
 	device := filepath.Join(t.TempDir(), "device")
 	writeStagingFile(t, staging, "photo.jpg", "some bytes")
 
-	mgr := NewManager(newFakeCataloger(), fakeExecutorForHappyPath(device), staging, spool, device, t.TempDir())
+	mgr := NewManager(newFakeCataloger(), fakeExecutorForHappyPath(device), staging, spool, t.TempDir())
 	mgr.freeSpace = func(string) (uint64, error) { return 100, nil } // way too little
 
-	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}
+	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10, IDPrefix: "BD", TargetPath: device}
 	err := mgr.Start(context.Background(), opts)
 	if err == nil || !strings.Contains(err.Error(), "not enough free space") {
 		t.Fatalf("Start error = %v, want a free-space error", err)
@@ -349,9 +349,9 @@ func TestManager_CommitDisc_FoldsStagedMetadataIntoFileRecord(t *testing.T) {
 	cat.StagedMetadata["a.bin"] = db.StagedMetadata{Tags: []string{"family"}, Description: "a note"}
 	ex := fakeExecutorForHappyPath(device)
 
-	mgr := NewManager(cat, ex, staging, t.TempDir(), device, t.TempDir())
+	mgr := NewManager(cat, ex, staging, t.TempDir(), t.TempDir())
 	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
-	if err := mgr.Start(context.Background(), Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}); err != nil {
+	if err := mgr.Start(context.Background(), Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10, IDPrefix: "BD", TargetPath: device}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if err := mgr.ContinueNextDisc(context.Background()); err != nil {
@@ -378,9 +378,9 @@ func TestManager_CommitDisc_UntaggedFileGetsEmptyMetadata(t *testing.T) {
 	cat := newFakeCataloger()
 	ex := fakeExecutorForHappyPath(device)
 
-	mgr := NewManager(cat, ex, staging, t.TempDir(), device, t.TempDir())
+	mgr := NewManager(cat, ex, staging, t.TempDir(), t.TempDir())
 	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
-	if err := mgr.Start(context.Background(), Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}); err != nil {
+	if err := mgr.Start(context.Background(), Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10, IDPrefix: "BD", TargetPath: device}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if err := mgr.ContinueNextDisc(context.Background()); err != nil {
@@ -414,10 +414,10 @@ func TestManager_Current_SafeForConcurrentReadsDuringBurn(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		return slowXorriso(args)
 	}
-	mgr := NewManager(cat, ex, staging, spool, device, t.TempDir())
+	mgr := NewManager(cat, ex, staging, spool, t.TempDir())
 	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
 
-	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}
+	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10, IDPrefix: "BD", TargetPath: device}
 	if err := mgr.Start(context.Background(), opts); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -454,6 +454,7 @@ func TestPlanJob_GroupsDataDiscsAndAddsParityDiscs(t *testing.T) {
 
 	opts := Options{
 		MediaType:       "BD-R",
+		IDPrefix:        "BD",
 		CapacityBytes:   150, // forces 5 buckets of ~100 bytes each (1 file per disc)
 		ParityPercent:   10,
 		CrossDiscParity: true,
@@ -502,6 +503,7 @@ func TestPlanJob_ExactMultipleOfGroupSizeHasNoRemainderGroup(t *testing.T) {
 
 	opts := Options{
 		MediaType:       "BD-R",
+		IDPrefix:        "BD",
 		CapacityBytes:   150,
 		ParityPercent:   10,
 		CrossDiscParity: true,
@@ -544,6 +546,7 @@ func TestPlanJob_GroupSizeZeroDefaultsToTen(t *testing.T) {
 
 	opts := Options{
 		MediaType:       "BD-R",
+		IDPrefix:        "BD",
 		CapacityBytes:   150,
 		ParityPercent:   10,
 		CrossDiscParity: true,
@@ -621,7 +624,7 @@ func TestPlanJob_AllocatesDistinctDiskIDsWithinOnePlanningPass(t *testing.T) {
 	}
 	cat := &countBasedCataloger{insertedByPrefix: map[string]int{}}
 
-	opts := Options{MediaType: "BD-R", CapacityBytes: 150, ParityPercent: 10}
+	opts := Options{MediaType: "BD-R", CapacityBytes: 150, ParityPercent: 10, IDPrefix: "BD"}
 	plans, err := planJob(context.Background(), staging, opts, cat)
 	if err != nil {
 		t.Fatalf("planJob: %v", err)
@@ -658,10 +661,10 @@ func TestManager_ContinueNextDisc_ConcurrentCallsRunExactlyOnce(t *testing.T) {
 
 	cat := newFakeCataloger()
 	ex := fakeExecutorForHappyPath(device)
-	mgr := NewManager(cat, ex, staging, spool, device, t.TempDir())
+	mgr := NewManager(cat, ex, staging, spool, t.TempDir())
 	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
 
-	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}
+	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10, IDPrefix: "BD", TargetPath: device}
 	if err := mgr.Start(context.Background(), opts); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -711,11 +714,13 @@ func TestManager_BurnsGroupWithParityDisc(t *testing.T) {
 
 	cat := newFakeCataloger()
 	ex := fakeExecutorWithContentAwareISO(device)
-	mgr := NewManager(cat, ex, staging, spool, device, t.TempDir())
+	mgr := NewManager(cat, ex, staging, spool, t.TempDir())
 	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
 
 	opts := Options{
 		MediaType:       "BD-R",
+		IDPrefix:        "BD",
+		TargetPath:      device,
 		CapacityBytes:   70, // 1 file per data disc
 		ParityPercent:   10,
 		CrossDiscParity: true,
@@ -815,11 +820,13 @@ func TestManager_ParityPayload_DoesNotLeakAcrossGroups(t *testing.T) {
 
 	cat := newFakeCataloger()
 	ex := fakeExecutorWithContentAwareISO(device)
-	mgr := NewManager(cat, ex, staging, spool, device, t.TempDir())
+	mgr := NewManager(cat, ex, staging, spool, t.TempDir())
 	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
 
 	opts := Options{
 		MediaType:       "BD-R",
+		IDPrefix:        "BD",
+		TargetPath:      device,
 		CapacityBytes:   70, // 1 file per data disc
 		ParityPercent:   10,
 		CrossDiscParity: true,
@@ -895,10 +902,10 @@ func TestManager_DryRun_CopiesISOInsteadOfBurning(t *testing.T) {
 	cat := newFakeCataloger()
 	ex := fakeExecutorForHappyPath(filepath.Join(t.TempDir(), "device")) // registers par2create/xorriso/par2verify; wodim would just no-op if called, so we separately assert it never is
 
-	mgr := NewManager(cat, ex, staging, t.TempDir(), t.TempDir()+"/device", dryRunDir)
+	mgr := NewManager(cat, ex, staging, t.TempDir(), dryRunDir)
 	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
 
-	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10, DryRun: true}
+	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10, DryRun: true, IDPrefix: "BD"}
 	if err := mgr.Start(context.Background(), opts); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -934,5 +941,83 @@ func TestManager_DryRun_CopiesISOInsteadOfBurning(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(staging, "a.bin")); !os.IsNotExist(err) {
 		t.Error("expected a.bin to be removed from staging after a dry-run burn, same as a real one")
+	}
+}
+
+func TestManager_FilesystemWriteKind_CopiesAndVerifiesWithChecksumFile(t *testing.T) {
+	staging := t.TempDir()
+	writeStagingFile(t, staging, "a.bin", "hello")
+	targetDir := t.TempDir()
+	targetPath := filepath.Join(targetDir, "usb-target.iso")
+
+	cat := newFakeCataloger()
+	ex := fakeExecutorForHappyPath("") // devicePath unused for a filesystem-kind burn; wodim is asserted never called below
+
+	mgr := NewManager(cat, ex, staging, t.TempDir(), t.TempDir())
+	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
+
+	opts := Options{
+		MediaType:     "USB",
+		CapacityBytes: 1000,
+		ParityPercent: 10,
+		IDPrefix:      "USB",
+		WriteKind:     "filesystem",
+		TargetPath:    targetPath,
+	}
+	if err := mgr.Start(context.Background(), opts); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := mgr.ContinueNextDisc(context.Background()); err != nil {
+		t.Fatalf("ContinueNextDisc: %v", err)
+	}
+
+	job := mgr.Current()
+	if job.State != StateDone {
+		t.Fatalf("State = %s, want DONE (err=%v)", job.State, job.Err)
+	}
+	for _, call := range ex.Calls() {
+		if call.Name == "wodim" {
+			t.Fatal("expected wodim to never be called for a filesystem-write-kind burn")
+		}
+	}
+
+	if len(cat.Disks) != 1 || cat.Disks[0].ID != "USB:0001" {
+		t.Fatalf("Disks = %+v, want ID=USB:0001 (from IDPrefix)", cat.Disks)
+	}
+
+	isoBytes, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("reading copied target: %v", err)
+	}
+	if len(isoBytes) == 0 {
+		t.Error("expected a non-empty copied ISO at targetPath")
+	}
+
+	sumBytes, err := os.ReadFile(targetPath + ".sha256")
+	if err != nil {
+		t.Fatalf("reading checksum file: %v", err)
+	}
+	wantHash, err := HashFile(targetPath)
+	if err != nil {
+		t.Fatalf("HashFile: %v", err)
+	}
+	wantLine := wantHash + "  usb-target.iso\n"
+	if string(sumBytes) != wantLine {
+		t.Errorf("checksum file = %q, want %q", sumBytes, wantLine)
+	}
+}
+
+func TestPlanJob_UsesOptionsIDPrefixNotMediaTypeName(t *testing.T) {
+	staging := t.TempDir()
+	writeStagingFile(t, staging, "a.bin", "hello")
+	cat := newFakeCataloger()
+
+	opts := Options{MediaType: "Definitely Not A Known Media Type", CapacityBytes: 1000, ParityPercent: 10, IDPrefix: "RDX"}
+	plans, err := planJob(context.Background(), staging, opts, cat)
+	if err != nil {
+		t.Fatalf("planJob: %v", err)
+	}
+	if len(plans) != 1 || plans[0].DiskID != "RDX:0001" {
+		t.Fatalf("plans = %+v, want one plan with DiskID=RDX:0001 (from opts.IDPrefix, ignoring MediaType's name)", plans)
 	}
 }

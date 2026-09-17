@@ -45,6 +45,9 @@ type Options struct {
 	CrossDiscParity bool
 	GroupSize       int
 	DryRun          bool
+	IDPrefix        string
+	WriteKind       string // "optical" | "filesystem" — ignored when DryRun is set
+	TargetPath      string // device path or filesystem target — ignored when DryRun is set
 }
 
 // DiscPlan is one disc's worth of work.
@@ -87,7 +90,6 @@ type Manager struct {
 	ex         execx.Executor
 	stagingDir string
 	spoolDir   string
-	device     string
 	dryRunDir  string
 	freeSpace  func(path string) (uint64, error)
 
@@ -95,13 +97,12 @@ type Manager struct {
 	job *Job
 }
 
-func NewManager(cat Cataloger, ex execx.Executor, stagingDir, spoolDir, device, dryRunDir string) *Manager {
+func NewManager(cat Cataloger, ex execx.Executor, stagingDir, spoolDir, dryRunDir string) *Manager {
 	return &Manager{
 		cat:        cat,
 		ex:         ex,
 		stagingDir: stagingDir,
 		spoolDir:   spoolDir,
-		device:     device,
 		dryRunDir:  dryRunDir,
 		freeSpace:  diskFreeBytes,
 	}
@@ -130,17 +131,6 @@ func diskFreeBytes(path string) (uint64, error) {
 	return uint64(stat.Bavail) * uint64(stat.Bsize), nil
 }
 
-func mediaPrefix(mediaType string) string {
-	switch mediaType {
-	case "BD-R":
-		return "BD"
-	case "BD-R DL":
-		return "BDDL"
-	default:
-		return "DISC"
-	}
-}
-
 // planJob scans staging and greedily buckets files into disc-sized plans.
 // When opts.CrossDiscParity is set, data discs are assigned into groups of
 // opts.GroupSize (a trailing short group still gets its own parity disc),
@@ -155,7 +145,7 @@ func planJob(ctx context.Context, stagingDir string, opts Options, cat Cataloger
 	target := binpack.TargetDataSize(opts.CapacityBytes, opts.ParityPercent)
 	buckets := binpack.Pack(files, target)
 
-	prefix := mediaPrefix(opts.MediaType)
+	prefix := opts.IDPrefix
 	allocated := map[string]int{}
 	var plans []DiscPlan
 	for _, b := range buckets {
@@ -372,25 +362,35 @@ func (m *Manager) runDisc(ctx context.Context, job *Job, plan DiscPlan) error {
 	}
 
 	m.setState(job, StateBurning)
-	if job.Options.DryRun {
-		// No physical media, so nothing to verify against — the file just
-		// copied here is exactly what gets cataloged, with no read-back
-		// round trip to introduce a discrepancy. StateVerifying is skipped
-		// entirely rather than reused, since there's genuinely no
-		// verification step happening.
+	switch {
+	case job.Options.DryRun:
 		if err := os.MkdirAll(m.dryRunDir, 0o755); err != nil {
 			return fmt.Errorf("dry run dir: %w", err)
 		}
 		if err := copyFile(filepath.Join(m.dryRunDir, plan.DiskID+".iso"), isoPath); err != nil {
 			return fmt.Errorf("dry run copy: %w", err)
 		}
-	} else {
-		if err := BurnISO(ctx, m.ex, m.device, isoPath); err != nil {
+	case job.Options.WriteKind == "filesystem":
+		if err := copyFile(job.Options.TargetPath, isoPath); err != nil {
+			return fmt.Errorf("copy: %w", err)
+		}
+		m.setState(job, StateVerifying)
+		if err := VerifyBurn(ctx, m.ex, job.Options.TargetPath, isoHash, filepath.Join(isoDir, filepath.Base(tarPath))); err != nil {
+			return fmt.Errorf("verify: %w", err)
+		}
+		// Independently checkable without trusting the app: standard
+		// sha256sum -c input, "<hash>  <filename>\n".
+		checksumLine := isoHash + "  " + filepath.Base(job.Options.TargetPath) + "\n"
+		if err := os.WriteFile(job.Options.TargetPath+".sha256", []byte(checksumLine), 0o644); err != nil {
+			return fmt.Errorf("writing checksum file: %w", err)
+		}
+	default: // "optical"
+		if err := BurnISO(ctx, m.ex, job.Options.TargetPath, isoPath); err != nil {
 			return fmt.Errorf("burn: %w", err)
 		}
 
 		m.setState(job, StateVerifying)
-		if err := VerifyBurn(ctx, m.ex, m.device, isoHash, filepath.Join(isoDir, filepath.Base(tarPath))); err != nil {
+		if err := VerifyBurn(ctx, m.ex, job.Options.TargetPath, isoHash, filepath.Join(isoDir, filepath.Base(tarPath))); err != nil {
 			return fmt.Errorf("verify: %w", err)
 		}
 	}
