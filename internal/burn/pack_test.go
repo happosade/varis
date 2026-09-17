@@ -124,3 +124,32 @@ func TestWriteTar_Compressed(t *testing.T) {
 		t.Errorf("hdr.Name = %q, want a.txt", hdr.Name)
 	}
 }
+
+func TestExtractFile_PullsOneMemberOut(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "b.txt"), []byte("world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bucket := binpack.Bucket{Files: []binpack.FileInfo{
+		{Path: "a.txt", Size: 5}, {Path: "b.txt", Size: 5},
+	}}
+	tarPath := filepath.Join(t.TempDir(), "out.tar")
+	if err := WriteTar(root, bucket, tarPath, false); err != nil {
+		t.Fatal(err)
+	}
+
+	dest := filepath.Join(t.TempDir(), "recovered.txt")
+	if err := ExtractFile(tarPath, false, "b.txt", dest); err != nil {
+		t.Fatalf("ExtractFile: %v", err)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "world" {
+		t.Errorf("content = %q, want world", got)
+	}
+}

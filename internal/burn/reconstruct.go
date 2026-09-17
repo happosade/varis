@@ -2,6 +2,8 @@ package burn
 
 import (
 	"fmt"
+	"io"
+	"os"
 
 	"varis/internal/db"
 	"varis/internal/xordisk"
@@ -109,4 +111,26 @@ func (r *Reconstructor) Reconstruct() ([]byte, error) {
 		images = append(images, r.images[id])
 	}
 	return xordisk.XOR(images, r.capacityBytes), nil
+}
+
+// ReadRawImage copies exactly sizeBytes from device into destPath, giving
+// a byte-for-byte image matching what buildParityPayload XORed at burn
+// time (every group member's image is zero-padded to the media's full
+// capacity — see xordisk.XOR).
+func ReadRawImage(device, destPath string, sizeBytes int64) error {
+	in, err := os.Open(device)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(destPath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.CopyN(out, in, sizeBytes)
+	if err != nil && err != io.EOF {
+		return err
+	}
+	return nil
 }

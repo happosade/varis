@@ -2,6 +2,8 @@ package burn
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"varis/internal/db"
@@ -107,6 +109,25 @@ func TestReconstructor_Reconstruct_FailsWhenStillMissingDiscs(t *testing.T) {
 	want := "still need discs: [BD:0002]"
 	if err.Error() != want {
 		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestReadRawImage_CopiesExactlySizeBytes(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "device")
+	if err := os.WriteFile(src, bytes.Repeat([]byte{0x42}, 1000), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "out.img")
+
+	if err := ReadRawImage(src, dest, 500); err != nil {
+		t.Fatalf("ReadRawImage: %v", err)
+	}
+	data, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 500 {
+		t.Fatalf("len(data) = %d, want 500", len(data))
 	}
 }
 

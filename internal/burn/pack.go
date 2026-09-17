@@ -3,6 +3,7 @@ package burn
 import (
 	"archive/tar"
 	"compress/gzip"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -62,4 +63,44 @@ func addFileToTar(tw *tar.Writer, root string, f binpack.FileInfo) error {
 	defer in.Close()
 	_, err = io.Copy(tw, in)
 	return err
+}
+
+// ExtractFile pulls one member (relPath) out of a tar archive at tarPath
+// (gzipped if compressed) and writes it to destPath.
+func ExtractFile(tarPath string, compressed bool, relPath, destPath string) error {
+	f, err := os.Open(tarPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	var r io.Reader = f
+	if compressed {
+		gz, err := gzip.NewReader(f)
+		if err != nil {
+			return err
+		}
+		defer gz.Close()
+		r = gz
+	}
+
+	tr := tar.NewReader(r)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return fmt.Errorf("file %s not found in %s", relPath, tarPath)
+		}
+		if err != nil {
+			return err
+		}
+		if hdr.Name == relPath {
+			out, err := os.Create(destPath)
+			if err != nil {
+				return err
+			}
+			defer out.Close()
+			_, err = io.Copy(out, tr)
+			return err
+		}
+	}
 }
