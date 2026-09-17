@@ -72,6 +72,7 @@ type Cataloger interface {
 	NextGroupID(ctx context.Context, burnJobID string, groupSize int) (string, error)
 	InsertDisk(ctx context.Context, d db.Disk) error
 	InsertFile(ctx context.Context, f db.FileRecord) error
+	ConsumeStagedMetadata(ctx context.Context, path string) (tags []string, description string, err error)
 }
 
 // Manager runs at most one Job at a time, matching the single-drive reality.
@@ -494,11 +495,17 @@ func (m *Manager) commitDisc(ctx context.Context, job *Job, plan DiscPlan, isoHa
 		if err != nil {
 			return err
 		}
+		tags, description, err := m.cat.ConsumeStagedMetadata(ctx, f.Path)
+		if err != nil {
+			return err
+		}
 		if err := m.cat.InsertFile(ctx, db.FileRecord{
 			DiskID:       plan.DiskID,
 			OriginalPath: f.Path,
 			SizeBytes:    f.Size,
 			FileHash:     hash,
+			Tags:         tags,
+			Description:  description,
 		}); err != nil {
 			return err
 		}
@@ -532,4 +539,7 @@ func (c pgxCataloger) InsertDisk(ctx context.Context, d db.Disk) error {
 }
 func (c pgxCataloger) InsertFile(ctx context.Context, f db.FileRecord) error {
 	return db.InsertFile(ctx, c.pool, f)
+}
+func (c pgxCataloger) ConsumeStagedMetadata(ctx context.Context, path string) ([]string, string, error) {
+	return db.ConsumeStagedMetadata(ctx, c.pool, path)
 }

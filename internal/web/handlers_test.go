@@ -54,6 +54,10 @@ func (c *stubCataloger) NextGroupID(ctx context.Context, burnJobID string, group
 func (c *stubCataloger) InsertDisk(ctx context.Context, d db.Disk) error        { return nil }
 func (c *stubCataloger) InsertFile(ctx context.Context, f db.FileRecord) error { return nil }
 
+func (c *stubCataloger) ConsumeStagedMetadata(ctx context.Context, path string) ([]string, string, error) {
+	return nil, "", nil
+}
+
 func TestStartBurn_RejectedWhileRetrievalInProgress(t *testing.T) {
 	staging := t.TempDir()
 	if err := writeFixtureFile(staging, "a.bin", "some bytes"); err != nil {

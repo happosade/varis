@@ -19,16 +19,22 @@ import (
 
 // FakeCataloger is an in-memory Cataloger for tests.
 type FakeCataloger struct {
-	mu         sync.Mutex
-	seq        map[string]int
-	burnJobSeq int
-	groupSeq   int
-	Disks      []db.Disk
-	Files      []db.FileRecord
+	mu             sync.Mutex
+	seq            map[string]int
+	burnJobSeq     int
+	groupSeq       int
+	Disks          []db.Disk
+	Files          []db.FileRecord
+	StagedMetadata map[string]fakeStagedMeta
+}
+
+type fakeStagedMeta struct {
+	Tags        []string
+	Description string
 }
 
 func newFakeCataloger() *FakeCataloger {
-	return &FakeCataloger{seq: map[string]int{}}
+	return &FakeCataloger{seq: map[string]int{}, StagedMetadata: map[string]fakeStagedMeta{}}
 }
 
 func (f *FakeCataloger) NextDiskID(ctx context.Context, prefix string, alreadyAllocated int) (string, error) {
@@ -64,6 +70,17 @@ func (f *FakeCataloger) InsertFile(ctx context.Context, fr db.FileRecord) error 
 	defer f.mu.Unlock()
 	f.Files = append(f.Files, fr)
 	return nil
+}
+
+func (f *FakeCataloger) ConsumeStagedMetadata(ctx context.Context, path string) ([]string, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m, ok := f.StagedMetadata[path]
+	if !ok {
+		return nil, "", nil
+	}
+	delete(f.StagedMetadata, path)
+	return m.Tags, m.Description, nil
 }
 
 // fakeExecutorForHappyPath configures Funcs that simulate the filesystem
@@ -325,6 +342,63 @@ func TestManager_RejectsWhenNotEnoughFreeSpace(t *testing.T) {
 	}
 }
 
+func TestManager_CommitDisc_FoldsStagedMetadataIntoFileRecord(t *testing.T) {
+	staging := t.TempDir()
+	if err := os.WriteFile(filepath.Join(staging, "a.bin"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	device := t.TempDir() + "/device"
+	cat := newFakeCataloger()
+	cat.StagedMetadata["a.bin"] = fakeStagedMeta{Tags: []string{"family"}, Description: "a note"}
+	ex := fakeExecutorForHappyPath(device)
+
+	mgr := NewManager(cat, ex, staging, t.TempDir(), device)
+	if err := mgr.Start(context.Background(), Options{MediaType: "BD-R", CapacityBytes: 1_000_000, ParityPercent: 10}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := mgr.ContinueNextDisc(context.Background()); err != nil {
+		t.Fatalf("ContinueNextDisc: %v", err)
+	}
+
+	if len(cat.Files) != 1 {
+		t.Fatalf("Files = %v, want exactly 1", cat.Files)
+	}
+	f := cat.Files[0]
+	if len(f.Tags) != 1 || f.Tags[0] != "family" || f.Description != "a note" {
+		t.Errorf("committed FileRecord = %+v, want Tags=[family] Description=\"a note\"", f)
+	}
+	if _, stillStaged := cat.StagedMetadata["a.bin"]; stillStaged {
+		t.Error("expected a.bin's staged metadata to be consumed (deleted) once burned")
+	}
+}
+
+func TestManager_CommitDisc_UntaggedFileGetsEmptyMetadata(t *testing.T) {
+	staging := t.TempDir()
+	if err := os.WriteFile(filepath.Join(staging, "b.bin"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	device := t.TempDir() + "/device"
+	cat := newFakeCataloger()
+	ex := fakeExecutorForHappyPath(device)
+
+	mgr := NewManager(cat, ex, staging, t.TempDir(), device)
+	if err := mgr.Start(context.Background(), Options{MediaType: "BD-R", CapacityBytes: 1_000_000, ParityPercent: 10}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := mgr.ContinueNextDisc(context.Background()); err != nil {
+		t.Fatalf("ContinueNextDisc: %v", err)
+	}
+
+	if len(cat.Files) != 1 {
+		t.Fatalf("Files = %v, want exactly 1", cat.Files)
+	}
+	if len(cat.Files[0].Tags) != 0 || cat.Files[0].Description != "" {
+		t.Errorf("committed FileRecord = %+v, want empty Tags/Description for an untagged file", cat.Files[0])
+	}
+}
+
 // TestManager_Current_SafeForConcurrentReadsDuringBurn is a regression test
 // for a data race: Current() used to return the live *Job pointer, which
 // concurrent callers read (.State/.CurrentIndex/.Err) without a lock while
@@ -531,6 +605,9 @@ func (c *countBasedCataloger) NextGroupID(ctx context.Context, burnJobID string,
 }
 func (c *countBasedCataloger) InsertDisk(ctx context.Context, d db.Disk) error       { return nil }
 func (c *countBasedCataloger) InsertFile(ctx context.Context, f db.FileRecord) error { return nil }
+func (c *countBasedCataloger) ConsumeStagedMetadata(ctx context.Context, path string) ([]string, string, error) {
+	return nil, "", nil
+}
 
 // TestPlanJob_AllocatesDistinctDiskIDsWithinOnePlanningPass is a regression
 // test for a bug where planJob asked a count(*)-based Cataloger for one

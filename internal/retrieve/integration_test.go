@@ -186,6 +186,9 @@ func (s *inMemoryStore) InsertFile(ctx context.Context, f db.FileRecord) error {
 	s.files = append(s.files, f)
 	return nil
 }
+func (s *inMemoryStore) ConsumeStagedMetadata(ctx context.Context, path string) ([]string, string, error) {
+	return nil, "", nil
+}
 func (s *inMemoryStore) GetFile(ctx context.Context, fileID string) (db.FileRecord, error) {
 	for _, f := range s.files {
 		if f.ID == fileID {
