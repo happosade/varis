@@ -76,6 +76,16 @@ file extraction into `RetrievedDir`) is unchanged; it already treats its
 `retrieve.NewManager` gains a `dryRunDir string` parameter, matching
 `burn.NewManager`'s.
 
+`ReadReconstructionDisc` needs the identical treatment, for a case easy
+to overlook: a dry-run disc can be one of a group's *surviving* members
+during reconstruction of some other (real) missing disc, not only the
+disc actually being recovered. It already calls `m.cat.GetDisk` per
+member to decide *how* to read it (`Role == "parity"` extracts the
+payload; otherwise it does a raw capacity-bounded read) — it needs the
+same `IsDryRun` check to decide *where* to read it from, resolving `src`
+once (device or dry-run path) and using it in both of those existing
+branches instead of the hardcoded `m.device`.
+
 If a dry-run disc's ISO has been deleted (see [Section 5](#5-inspection--cleanup))
 but its catalog rows somehow still exist — which shouldn't happen given
 Section 5's all-or-nothing delete, but is worth being explicit about —
@@ -156,9 +166,16 @@ Following this project's existing conventions:
   same staged files if the staged files are still present, or accept
   that a dry run whose files were already committed/removed from staging
   needs a fresh burn planned from the dry-run ISO's contents manually.
-- Any change to how cross-disc-parity reconstruction works — dry-run
-  discs participate in groups identically to real ones, with no new
-  reconstruction-specific behavior.
+- Any change to reconstruction's *logic* (how members are supplied, when
+  reconstruction becomes possible, how the missing disc's image is
+  rebuilt) — dry-run discs participate in groups identically to real
+  ones there. The one place reconstruction *does* need to be dry-run
+  -aware is mechanical, not logical: `ReadReconstructionDisc` already
+  resolves *how* to read a member disc based on its `Role` (extract vs.
+  raw read); it needs the identical `IsDryRun`-based resolution of
+  *where* to read it from that `ReadDisk` gets, since a dry-run disc
+  can be a surviving group member just as easily as it can be the disc
+  being recovered. See Section 4.
 
 ## 9. TODO / Future Work
 
