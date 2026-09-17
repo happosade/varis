@@ -9,6 +9,16 @@ import (
 
 // Reconstructor drives the manual "insert every other disc in the group"
 // flow needed to rebuild one lost or unreadable disc.
+//
+// Not safe for concurrent use: a caller sharing one instance across
+// multiple HTTP requests (as plan 03's retrieval flow will do) must
+// serialize access itself.
+//
+// It holds every supplied member's full image in memory for the whole
+// (potentially long, human-paced) reconstruction session — the same
+// memory trade-off buildParityPayload makes on the burn side, but for a
+// longer duration. Accepted for a manual, low-frequency recovery flow,
+// not a bug.
 type Reconstructor struct {
 	missingID     string
 	otherIDs      []string
@@ -23,14 +33,29 @@ type Reconstructor struct {
 // missing disc. Every disc's media type within a group is the same (see
 // planJob), so capacityBytes is the group's single media type's capacity,
 // e.g. from db.GetMediaTypeCapacity (added by a later plan's HTTP layer).
-func NewReconstructor(group []db.Disk, missingID string, capacityBytes int64) *Reconstructor {
+//
+// Returns an error if missingID isn't actually a member of group — that
+// indicates a caller bug (wrong group resolved), and without this check
+// every disc in group would silently be treated as an "other" member,
+// producing a bogus non-error reconstruction result.
+func NewReconstructor(group []db.Disk, missingID string, capacityBytes int64) (*Reconstructor, error) {
+	found := false
+	for _, d := range group {
+		if d.ID == missingID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("disc %s is not a member of this group", missingID)
+	}
 	r := &Reconstructor{missingID: missingID, images: map[string][]byte{}, capacityBytes: capacityBytes}
 	for _, d := range group {
 		if d.ID != missingID {
 			r.otherIDs = append(r.otherIDs, d.ID)
 		}
 	}
-	return r
+	return r, nil
 }
 
 // Remaining lists the disc IDs still needed, in the order they were found
@@ -45,12 +70,16 @@ func (r *Reconstructor) Remaining() []string {
 	return out
 }
 
+// NeedsMore reports whether at least one other member's image is still
+// unsupplied.
 func (r *Reconstructor) NeedsMore() bool {
 	return len(r.Remaining()) > 0
 }
 
 // SupplyDiscImage records one other member's raw ISO bytes, already
-// verified via par2verify by the caller before this is called.
+// verified via par2verify by the caller before this is called. Calling it
+// twice with the same diskID intentionally overwrites the previous image,
+// letting an operator re-supply a disc that read badly the first time.
 func (r *Reconstructor) SupplyDiscImage(diskID string, image []byte) error {
 	found := false
 	for _, id := range r.otherIDs {
