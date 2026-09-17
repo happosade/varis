@@ -51,7 +51,7 @@ func (c *stubCataloger) NewBurnJobID(ctx context.Context) (string, error) { retu
 func (c *stubCataloger) NextGroupID(ctx context.Context, burnJobID string, groupSize int) (string, error) {
 	return "group", nil
 }
-func (c *stubCataloger) InsertDisk(ctx context.Context, d db.Disk) error        { return nil }
+func (c *stubCataloger) InsertDisk(ctx context.Context, d db.Disk) error       { return nil }
 func (c *stubCataloger) InsertFile(ctx context.Context, f db.FileRecord) error { return nil }
 
 func (c *stubCataloger) ConsumeStagedMetadata(ctx context.Context, path string) ([]string, string, error) {
@@ -122,7 +122,9 @@ type stubCatalog struct {
 func (c stubCatalog) GetFile(ctx context.Context, fileID string) (db.FileRecord, error) {
 	return c.files[fileID], nil
 }
-func (c stubCatalog) GetDisk(ctx context.Context, diskID string) (db.Disk, error) { return db.Disk{}, nil }
+func (c stubCatalog) GetDisk(ctx context.Context, diskID string) (db.Disk, error) {
+	return db.Disk{}, nil
+}
 func (c stubCatalog) GroupMembers(ctx context.Context, groupID string) ([]db.Disk, error) {
 	return nil, nil
 }

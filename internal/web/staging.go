@@ -31,7 +31,6 @@ type stagedFolderGroup struct {
 // alphabetically.
 func groupStagedFiles(files []binpack.FileInfo, meta map[string]db.StagedMetadata) []stagedFolderGroup {
 	groups := map[string]*stagedFolderGroup{}
-	var order []string
 	for _, f := range files {
 		name := ""
 		if idx := strings.IndexByte(f.Path, '/'); idx >= 0 {
@@ -41,22 +40,19 @@ func groupStagedFiles(files []binpack.FileInfo, meta map[string]db.StagedMetadat
 		if !ok {
 			g = &stagedFolderGroup{Name: name}
 			groups[name] = g
-			order = append(order, name)
 		}
 		m := meta[f.Path]
 		g.Files = append(g.Files, stagedFileRow{Path: f.Path, Size: f.Size, Tags: m.Tags, Description: m.Description})
 	}
-	sort.Slice(order, func(i, j int) bool {
-		if order[i] == "" {
-			return true
-		}
-		if order[j] == "" {
-			return false
-		}
-		return order[i] < order[j]
-	})
-	out := make([]stagedFolderGroup, 0, len(order))
-	for _, name := range order {
+	names := make([]string, 0, len(groups))
+	for name := range groups {
+		names = append(names, name)
+	}
+	// The root group ("") sorts before every non-empty name already, so a
+	// plain lexicographic sort gives root-first-then-alphabetical for free.
+	sort.Strings(names)
+	out := make([]stagedFolderGroup, 0, len(names))
+	for _, name := range names {
 		out = append(out, *groups[name])
 	}
 	return out
@@ -94,6 +90,7 @@ func resolveSelectedPaths(stagingDir string, selected []string) ([]string, error
 	for p := range set {
 		out = append(out, p)
 	}
+	sort.Strings(out)
 	return out, nil
 }
 

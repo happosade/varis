@@ -77,7 +77,9 @@ All are optional and defaulted in `internal/config/config.go`:
 
 ## Burning discs
 
-Stage your files in the To-Archive share, then on the dashboard:
+Stage your files in the To-Archive share. The dashboard lists every staged file, grouped by top-level folder, with a checkbox per file and per folder (a folder's checkbox selects everything currently under it). Check whatever you want to tag, enter comma-separated tags and/or a description, and click **Apply to selected** — this is optional and has no effect on burning itself, but it carries over to the permanent catalog record once a file is burned, so the Library's search can later match on it too (e.g. tag a folder "family videos 2019" and find it later by that tag, not just by filename).
+
+Then, still on the dashboard:
 
 1. **Media type** — pick from the dropdown. `BD-R` (25 GB) and `BD-R DL` (50 GB) are seeded by default; add more on the Config page.
 2. **Parity %** — the intra-disc par2 redundancy, default 10% (accepted range 5–50). Use something lower like 5% for low-value bulk data, higher like 25%+ for anything critical. Varis sizes each disc so that `data + par2(data)` fits the media capacity, so a higher percentage means fewer files per disc.
@@ -109,13 +111,14 @@ Defined in `internal/web/server.go`:
 
 | Route | Purpose |
 |---|---|
-| `GET /` | Dashboard: staging folder size, media type, parity %, compression, cross-disc parity toggle + group size, Burn button |
+| `GET /` | Dashboard: staged file listing (grouped by folder, with tag/description checkboxes), media type, parity %, compression, cross-disc parity toggle + group size, Burn button |
+| `POST /staging/metadata` | Apply tags/description to the selected staged files/folders |
 | `GET /jobs` | HTMX-polled fragment showing burn state machine progress |
 | `POST /burn` | Start a burn job |
 | `POST /jobs/continue` | "Next blank disc is inserted, continue" |
 | `POST /jobs/retry` | Retry the current disc after a failure |
 | `GET /library` | Search page |
-| `GET /search?q=` | Search results: filename, required disk ID, Get button |
+| `GET /search?q=` | Search results: filename, required disk ID, tags/description, Get button — matches path, tags, and description |
 | `POST /retrieve` | Start a retrieval |
 | `POST /retrieve/read` | "Disc is inserted, read it" |
 | `POST /retrieve/reconstruct/start` | Begin group reconstruction |

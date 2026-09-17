@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"varis/internal/binpack"
@@ -73,23 +74,60 @@ func TestResolveSelectedPaths_DirectPathsAndFolderPrefixes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveSelectedPaths: %v", err)
 	}
-	want := map[string]bool{"root.txt": true, "vacation/a.jpg": true, "vacation/b.jpg": true}
-	if len(got) != len(want) {
-		t.Fatalf("got = %v, want exactly %v", got, want)
+	want := []string{"root.txt", "vacation/a.jpg", "vacation/b.jpg"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got = %v, want %v", got, want)
 	}
-	for _, p := range got {
-		if !want[p] {
-			t.Errorf("unexpected path %q in result", p)
+}
+
+func TestParseTags(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want []string
+	}{
+		{"family, 2019", []string{"family", "2019"}},
+		{"family, ,2019", []string{"family", "2019"}},
+		{"", nil},
+		{"   ", nil},
+		{"onlyone", []string{"onlyone"}},
+	}
+	for _, tt := range tests {
+		if got := parseTags(tt.raw); !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("parseTags(%q) = %v, want %v", tt.raw, got, tt.want)
 		}
 	}
 }
 
-func TestTemplates_ParseWithoutError(t *testing.T) {
-	if _, err := templatesTestParse(); err != nil {
+// TestStagingFilesFragment_Renders executes (not just parses) the real
+// embedded "staging-files-fragment" template against representative data —
+// template.Parse alone accepts a reference to a field that doesn't exist on
+// stagedFileRow/stagedFolderGroup; only Execute catches that, so this is
+// the test that actually protects the dashboard from a silent runtime 500
+// on a struct field rename. It also doubles as an escaping check: a tag
+// containing HTML-special characters must come out escaped.
+func TestStagingFilesFragment_Renders(t *testing.T) {
+	tmpl, err := template.ParseFS(templatesFS, "templates/*.html")
+	if err != nil {
 		t.Fatalf("parsing embedded templates: %v", err)
 	}
-}
-
-func templatesTestParse() (*template.Template, error) {
-	return template.ParseFS(templatesFS, "templates/*.html")
+	groups := []stagedFolderGroup{
+		{Name: "", Files: []stagedFileRow{{Path: "root.txt", Size: 1}}},
+		{Name: "vacation", Files: []stagedFileRow{
+			{Path: "vacation/a.jpg", Size: 2, Tags: []string{"<b>family</b>"}, Description: "a trip"},
+		}},
+	}
+	var buf strings.Builder
+	if err := tmpl.ExecuteTemplate(&buf, "staging-files-fragment", groups); err != nil {
+		t.Fatalf("executing staging-files-fragment: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "<b>family</b>") {
+		t.Error("expected the tag's HTML-special characters to be escaped, found them raw")
+	}
+	if !strings.Contains(out, "&lt;b&gt;family&lt;/b&gt;") {
+		t.Errorf("expected the escaped tag text in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "vacation/a.jpg") || !strings.Contains(out, "root.txt") {
+		t.Errorf("expected both files' paths in output, got:\n%s", out)
+	}
 }
