@@ -22,6 +22,14 @@ func InsertFile(ctx context.Context, pool *pgxpool.Pool, f FileRecord) error {
 	return err
 }
 
+func GetFile(ctx context.Context, pool *pgxpool.Pool, id string) (FileRecord, error) {
+	var f FileRecord
+	err := pool.QueryRow(ctx,
+		`SELECT id, disk_id, original_path, size_bytes, file_hash FROM files WHERE id = $1`, id).
+		Scan(&f.ID, &f.DiskID, &f.OriginalPath, &f.SizeBytes, &f.FileHash)
+	return f, err
+}
+
 func SearchFiles(ctx context.Context, pool *pgxpool.Pool, query string) ([]FileRecord, error) {
 	rows, err := pool.Query(ctx,
 		`SELECT id, disk_id, original_path, size_bytes, file_hash FROM files

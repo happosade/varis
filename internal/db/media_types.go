@@ -50,3 +50,10 @@ func AddMediaType(ctx context.Context, pool *pgxpool.Pool, mt MediaType) error {
 		mt.Name, mt.CapacityBytes)
 	return err
 }
+
+func GetMediaTypeCapacity(ctx context.Context, pool *pgxpool.Pool, name string) (int64, error) {
+	var capacity int64
+	err := pool.QueryRow(ctx,
+		`SELECT capacity_bytes FROM media_types WHERE name = $1`, name).Scan(&capacity)
+	return capacity, err
+}
