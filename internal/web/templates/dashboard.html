@@ -6,6 +6,7 @@
 {{template "nav"}}
 <h1>To-Archive</h1>
 <p>Staged: {{.StagedBytes}} bytes.</p>
+{{template "staging-files-fragment" .StagedFiles}}
 
 <form hx-post="/burn" hx-target="#job-status" hx-swap="innerHTML">
   <label>Media type
@@ -25,4 +26,37 @@
 </div>
 </body>
 </html>
+{{end}}
+
+{{define "staging-files-fragment"}}
+<div id="staging-files">
+<form hx-post="/staging/metadata" hx-target="#staging-files" hx-swap="outerHTML">
+{{range .}}
+  <fieldset>
+    {{if .Name}}
+    <legend><label><input type="checkbox" name="path" value="{{.Name}}/"> {{.Name}}/</label></legend>
+    {{else}}
+    <legend>(root)</legend>
+    {{end}}
+    <table>
+      <thead><tr><th></th><th>File</th><th>Size</th><th>Tags</th><th>Description</th></tr></thead>
+      <tbody>
+      {{range .Files}}
+      <tr>
+        <td><input type="checkbox" name="path" value="{{.Path}}"></td>
+        <td>{{.Path}}</td>
+        <td>{{.Size}}</td>
+        <td>{{range .Tags}}<span class="tag">{{.}}</span>{{end}}</td>
+        <td>{{.Description}}</td>
+      </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </fieldset>
+{{end}}
+  <label>Tags (comma-separated) <input type="text" name="tags"></label>
+  <label>Description <input type="text" name="description"></label>
+  <button type="submit">Apply to selected</button>
+</form>
+</div>
 {{end}}

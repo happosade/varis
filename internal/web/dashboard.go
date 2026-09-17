@@ -9,12 +9,18 @@ import (
 
 type dashboardData struct {
 	StagedBytes int64
+	StagedFiles []stagedFolderGroup
 	MediaTypes  []db.MediaType
 	Job         *jobView
 }
 
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	staged, err := webdav.DirSize(s.stagingDir)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	stagedFiles, err := s.stagedFileGroups(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -26,6 +32,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	data := dashboardData{
 		StagedBytes: staged,
+		StagedFiles: stagedFiles,
 		MediaTypes:  types,
 		Job:         s.currentJobView(),
 	}
