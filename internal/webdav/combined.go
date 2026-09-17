@@ -164,20 +164,19 @@ func (r *rootDir) Write([]byte) (int, error)      { return 0, os.ErrInvalid }
 func (r *rootDir) Seek(int64, int) (int64, error) { return 0, os.ErrInvalid }
 func (r *rootDir) Stat() (os.FileInfo, error)     { return dirInfo{name: "/"}, nil }
 
+// Readdir follows os.File.Readdir's contract: each call continues from
+// where the previous one left off. At the end of the directory, count > 0
+// yields io.EOF, while count <= 0 yields a nil (not repeated) slice.
 func (r *rootDir) Readdir(count int) ([]os.FileInfo, error) {
-	if count <= 0 {
-		infos := make([]os.FileInfo, len(r.names))
-		for i, name := range r.names {
-			infos[i] = dirInfo{name: name}
-		}
-		return infos, nil
-	}
 	if r.offset >= len(r.names) {
-		return nil, io.EOF
+		if count > 0 {
+			return nil, io.EOF
+		}
+		return nil, nil
 	}
-	end := r.offset + count
-	if end > len(r.names) {
-		end = len(r.names)
+	end := len(r.names)
+	if count > 0 && r.offset+count < end {
+		end = r.offset + count
 	}
 	infos := make([]os.FileInfo, 0, end-r.offset)
 	for _, name := range r.names[r.offset:end] {
