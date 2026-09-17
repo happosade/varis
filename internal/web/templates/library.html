@@ -8,7 +8,7 @@
 <input type="search" name="q" placeholder="Search files…"
        hx-get="/search" hx-trigger="keyup changed delay:300ms" hx-target="#results">
 <table>
-  <thead><tr><th>File</th><th>Size</th><th>Disc</th><th></th></tr></thead>
+  <thead><tr><th>File</th><th>Size</th><th>Disc</th><th>Tags</th><th></th></tr></thead>
   <tbody id="results">
   {{template "search-rows" .}}
   </tbody>
@@ -24,6 +24,7 @@
   <td>{{.OriginalPath}}</td>
   <td>{{.SizeBytes}}</td>
   <td>{{.DiskID}}</td>
+  <td>{{range .Tags}}<span class="tag">{{.}}</span>{{end}}{{if .Description}} <em>{{.Description}}</em>{{end}}</td>
   <td>
     <form hx-post="/retrieve" hx-target="#retrieve-status" hx-swap="innerHTML">
       <input type="hidden" name="file_id" value="{{.ID}}">
