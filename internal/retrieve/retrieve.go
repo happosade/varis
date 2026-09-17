@@ -300,7 +300,9 @@ func (m *Manager) ReadReconstructionDisc(ctx context.Context, diskID string) err
 	if err != nil {
 		return m.revertToReconstructing(job, err)
 	}
-	if err := r.SupplyDiscImage(diskID, data); err != nil {
+
+	image, needsMore, err := m.foldReconstructionImage(r, diskID, data)
+	if err != nil {
 		return m.revertToReconstructing(job, err)
 	}
 	// The image's bytes are now safely held in memory by r — the file on
@@ -311,7 +313,7 @@ func (m *Manager) ReadReconstructionDisc(ctx context.Context, diskID string) err
 		log.Printf("retrieve: cleaning up reconstruction image %s after folding into memory: %v", imagePath, err)
 	}
 
-	if r.NeedsMore() {
+	if needsMore {
 		m.mu.Lock()
 		job.Err = nil
 		job.State = StateReconstructing
@@ -319,10 +321,6 @@ func (m *Manager) ReadReconstructionDisc(ctx context.Context, diskID string) err
 		return nil
 	}
 
-	image, err := r.Reconstruct()
-	if err != nil {
-		return m.revertToReconstructing(job, err)
-	}
 	reconstructedPath := filepath.Join(m.scratchDir, job.DiskID+".reconstructed.iso")
 	if err := os.WriteFile(reconstructedPath, image, 0o644); err != nil {
 		return m.revertToReconstructing(job, err)
@@ -330,6 +328,28 @@ func (m *Manager) ReadReconstructionDisc(ctx context.Context, diskID string) err
 	defer os.Remove(reconstructedPath)
 
 	return m.readFrom(ctx, job, reconstructedPath)
+}
+
+// foldReconstructionImage supplies diskID's raw image to r and, once every
+// other member has been supplied, reconstructs the missing disc's image —
+// all under m.mu, the same lock Remaining() (and every other method
+// touching m.reconstructor) already holds while it does. r is a
+// *burn.Reconstructor, documented as unsafe for concurrent use; without
+// this lock, ReadReconstructionDisc's in-memory mutation of r would race
+// with a concurrent Remaining() call reading it (e.g. a status-polling
+// HTTP request). File I/O is deliberately kept out of this critical
+// section so it doesn't block other callers any longer than necessary.
+func (m *Manager) foldReconstructionImage(r *burn.Reconstructor, diskID string, data []byte) (image []byte, needsMore bool, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := r.SupplyDiscImage(diskID, data); err != nil {
+		return nil, false, err
+	}
+	if r.NeedsMore() {
+		return nil, true, nil
+	}
+	image, err = r.Reconstruct()
+	return image, false, err
 }
 
 // revertToReconstructing is used when ReadReconstructionDisc fails after
