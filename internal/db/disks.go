@@ -19,6 +19,7 @@ type Disk struct {
 	SlotIndex     *int
 	ISOHash       string
 	CreatedAt     time.Time
+	IsDryRun      bool
 }
 
 func InsertDiskGroup(ctx context.Context, pool *pgxpool.Pool, burnJobID string, groupSize int) (string, error) {
@@ -49,18 +50,18 @@ func NextDiskID(ctx context.Context, pool *pgxpool.Pool, prefix string, alreadyA
 
 func InsertDisk(ctx context.Context, pool *pgxpool.Pool, d Disk) error {
 	_, err := pool.Exec(ctx,
-		`INSERT INTO disks (id, media_type, parity_percent, group_id, role, slot_index, iso_hash)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		d.ID, d.MediaType, d.ParityPercent, d.GroupID, d.Role, d.SlotIndex, d.ISOHash)
+		`INSERT INTO disks (id, media_type, parity_percent, group_id, role, slot_index, iso_hash, is_dry_run)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		d.ID, d.MediaType, d.ParityPercent, d.GroupID, d.Role, d.SlotIndex, d.ISOHash, d.IsDryRun)
 	return err
 }
 
 func GetDisk(ctx context.Context, pool *pgxpool.Pool, id string) (Disk, error) {
 	var d Disk
 	err := pool.QueryRow(ctx,
-		`SELECT id, media_type, parity_percent, group_id, role, slot_index, iso_hash, created_at
+		`SELECT id, media_type, parity_percent, group_id, role, slot_index, iso_hash, created_at, is_dry_run
 		 FROM disks WHERE id = $1`, id).
-		Scan(&d.ID, &d.MediaType, &d.ParityPercent, &d.GroupID, &d.Role, &d.SlotIndex, &d.ISOHash, &d.CreatedAt)
+		Scan(&d.ID, &d.MediaType, &d.ParityPercent, &d.GroupID, &d.Role, &d.SlotIndex, &d.ISOHash, &d.CreatedAt, &d.IsDryRun)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Disk{}, fmt.Errorf("disk %s not found", id)
 	}
@@ -69,7 +70,7 @@ func GetDisk(ctx context.Context, pool *pgxpool.Pool, id string) (Disk, error) {
 
 func GroupMembers(ctx context.Context, pool *pgxpool.Pool, groupID string) ([]Disk, error) {
 	rows, err := pool.Query(ctx,
-		`SELECT id, media_type, parity_percent, group_id, role, slot_index, iso_hash, created_at
+		`SELECT id, media_type, parity_percent, group_id, role, slot_index, iso_hash, created_at, is_dry_run
 		 FROM disks WHERE group_id = $1 ORDER BY slot_index`, groupID)
 	if err != nil {
 		return nil, err
@@ -78,7 +79,48 @@ func GroupMembers(ctx context.Context, pool *pgxpool.Pool, groupID string) ([]Di
 	var out []Disk
 	for rows.Next() {
 		var d Disk
-		if err := rows.Scan(&d.ID, &d.MediaType, &d.ParityPercent, &d.GroupID, &d.Role, &d.SlotIndex, &d.ISOHash, &d.CreatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.MediaType, &d.ParityPercent, &d.GroupID, &d.Role, &d.SlotIndex, &d.ISOHash, &d.CreatedAt, &d.IsDryRun); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// DeleteDryRunDisc removes a dry-run disc's file and disk rows together.
+// Scoped to is_dry_run = true throughout, so calling it with a real disc's
+// ID is a safe no-op, never data loss. Files are deleted before the disk
+// row (not wrapped in a transaction — this project doesn't use them
+// elsewhere): if the process dies between the two statements, the worst
+// case is an orphaned disk row with no files, which a second call to
+// DeleteDryRunDisc cleans up (its own file-delete is a no-op, and the
+// disk row still matches is_dry_run = true).
+func DeleteDryRunDisc(ctx context.Context, pool *pgxpool.Pool, diskID string) error {
+	_, err := pool.Exec(ctx,
+		`DELETE FROM files WHERE disk_id = $1 AND EXISTS (
+		     SELECT 1 FROM disks WHERE id = $1 AND is_dry_run
+		 )`, diskID)
+	if err != nil {
+		return err
+	}
+	_, err = pool.Exec(ctx, `DELETE FROM disks WHERE id = $1 AND is_dry_run`, diskID)
+	return err
+}
+
+// ListDryRunDisks returns every disc flagged is_dry_run, newest first, for
+// the /dryruns management page.
+func ListDryRunDisks(ctx context.Context, pool *pgxpool.Pool) ([]Disk, error) {
+	rows, err := pool.Query(ctx,
+		`SELECT id, media_type, parity_percent, group_id, role, slot_index, iso_hash, created_at, is_dry_run
+		 FROM disks WHERE is_dry_run ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Disk
+	for rows.Next() {
+		var d Disk
+		if err := rows.Scan(&d.ID, &d.MediaType, &d.ParityPercent, &d.GroupID, &d.Role, &d.SlotIndex, &d.ISOHash, &d.CreatedAt, &d.IsDryRun); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
