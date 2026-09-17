@@ -3,6 +3,7 @@ package retrieve
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -16,10 +17,19 @@ type State string
 
 const (
 	StateAwaitingMedia       State = "AWAITING_MEDIA"
+	StateReadingDisc         State = "READING_DISC"
 	StateDone                State = "DONE"
 	StateFailed              State = "FAILED"
 	StateNeedsReconstruction State = "NEEDS_RECONSTRUCTION"
-	StateReconstructing      State = "RECONSTRUCTING"
+	// StateStartingReconstruction is held only while StartReconstruction's
+	// DB lookups and Reconstructor construction are in flight, claiming
+	// the job so a concurrent caller can't also enter StartReconstruction.
+	StateStartingReconstruction State = "STARTING_RECONSTRUCTION"
+	StateReconstructing         State = "RECONSTRUCTING"
+	// StateReadingReconstructionDisc is held only while ReadReconstructionDisc
+	// is reading and folding one member disc into the Reconstructor,
+	// claiming the job so a concurrent caller can't also enter it.
+	StateReadingReconstructionDisc State = "READING_RECONSTRUCTION_DISC"
 )
 
 type Job struct {
@@ -51,10 +61,31 @@ func NewManager(cat Catalog, ex execx.Executor, retrievedDir, scratchDir, device
 	return &Manager{cat: cat, ex: ex, retrievedDir: retrievedDir, scratchDir: scratchDir, device: device}
 }
 
+// Current returns a snapshot of the in-flight (or just-finished/failed)
+// job, or nil if none has been started yet. It returns a value copy (not
+// the live job) so callers never race with readFrom/ReadReconstructionDisc's
+// concurrent state updates.
 func (m *Manager) Current() *Job {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.job
+	if m.job == nil {
+		return nil
+	}
+	jobCopy := *m.job
+	return &jobCopy
+}
+
+// Abort discards the current job (and any in-progress reconstruction),
+// giving a caller an escape hatch when a retrieval or reconstruction is
+// truly unrecoverable (e.g. too many group members are also damaged) —
+// without it, a job stuck outside StateDone/StateFailed would permanently
+// block any future Start call.
+func (m *Manager) Abort() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.job = nil
+	m.reconstructor = nil
+	m.reconstructionCapacity = 0
 }
 
 func (m *Manager) Start(ctx context.Context, fileID string) error {
@@ -76,10 +107,17 @@ func (m *Manager) Start(ctx context.Context, fileID string) error {
 func (m *Manager) ReadDisk(ctx context.Context) error {
 	m.mu.Lock()
 	job := m.job
-	m.mu.Unlock()
 	if job == nil || job.State != StateAwaitingMedia {
+		m.mu.Unlock()
 		return fmt.Errorf("no retrieval awaiting media")
 	}
+	// Claim the job atomically in the same critical section as the check
+	// above, so two concurrent callers can't both observe AwaitingMedia and
+	// both enter readFrom for the same job. readFrom's fail/needsReconstruction/
+	// success paths always set a next state before returning, so this claim
+	// alone is enough to prevent double-entry.
+	job.State = StateReadingDisc
+	m.mu.Unlock()
 	return m.readFrom(ctx, job, m.device)
 }
 
@@ -170,35 +208,56 @@ func (m *Manager) needsReconstruction(job *Job, err error) error {
 func (m *Manager) StartReconstruction(ctx context.Context) error {
 	m.mu.Lock()
 	job := m.job
-	m.mu.Unlock()
 	if job == nil || job.State != StateNeedsReconstruction {
+		m.mu.Unlock()
 		return fmt.Errorf("no disc needing reconstruction")
 	}
+	// Claim the job atomically in the same critical section as the check
+	// above, so two concurrent callers can't both observe
+	// NeedsReconstruction and both start building a Reconstructor for the
+	// same job.
+	job.State = StateStartingReconstruction
+	m.mu.Unlock()
+
 	disk, err := m.cat.GetDisk(ctx, job.DiskID)
 	if err != nil {
-		return err
+		return m.revertToNeedsReconstruction(job, err)
 	}
 	if disk.GroupID == nil {
-		return fmt.Errorf("disc %s is not part of a cross-disc parity group", job.DiskID)
+		return m.revertToNeedsReconstruction(job, fmt.Errorf("disc %s is not part of a cross-disc parity group", job.DiskID))
 	}
 	members, err := m.cat.GroupMembers(ctx, *disk.GroupID)
 	if err != nil {
-		return err
+		return m.revertToNeedsReconstruction(job, err)
 	}
 	capacity, err := m.cat.MediaCapacity(ctx, disk.MediaType)
 	if err != nil {
-		return err
+		return m.revertToNeedsReconstruction(job, err)
 	}
 	reconstructor, err := burn.NewReconstructor(members, job.DiskID, capacity)
 	if err != nil {
-		return err
+		return m.revertToNeedsReconstruction(job, err)
 	}
+
 	m.mu.Lock()
 	m.reconstructor = reconstructor
 	m.reconstructionCapacity = capacity
+	job.Err = nil
 	job.State = StateReconstructing
 	m.mu.Unlock()
 	return nil
+}
+
+// revertToNeedsReconstruction is used when StartReconstruction fails after
+// claiming StateStartingReconstruction: it puts the job back into
+// StateNeedsReconstruction (rather than a terminal failure) with err
+// recorded, so the user can simply retry "Reconstruct from group".
+func (m *Manager) revertToNeedsReconstruction(job *Job, err error) error {
+	m.mu.Lock()
+	job.State = StateNeedsReconstruction
+	job.Err = err
+	m.mu.Unlock()
+	return err
 }
 
 // Remaining lists the disc IDs still needed for reconstruction.
@@ -223,35 +282,65 @@ func (m *Manager) ReadReconstructionDisc(ctx context.Context, diskID string) err
 	job := m.job
 	r := m.reconstructor
 	capacity := m.reconstructionCapacity
-	m.mu.Unlock()
 	if job == nil || r == nil || job.State != StateReconstructing {
+		m.mu.Unlock()
 		return fmt.Errorf("no reconstruction in progress")
 	}
+	// Claim the job atomically in the same critical section as the check
+	// above, so two concurrent callers can't both observe Reconstructing
+	// and both fold a disc image into the same Reconstructor at once.
+	job.State = StateReadingReconstructionDisc
+	m.mu.Unlock()
 
 	imagePath := filepath.Join(m.scratchDir, diskID+".img")
 	if err := burn.ReadRawImage(m.device, imagePath, capacity); err != nil {
-		return err
+		return m.revertToReconstructing(job, err)
 	}
 	data, err := os.ReadFile(imagePath)
 	if err != nil {
-		return err
+		return m.revertToReconstructing(job, err)
 	}
 	if err := r.SupplyDiscImage(diskID, data); err != nil {
-		return err
+		return m.revertToReconstructing(job, err)
 	}
+	// The image's bytes are now safely held in memory by r — the file on
+	// disk is no longer needed. A failure here doesn't affect the already
+	// -recorded reconstruction progress, so it's logged rather than failing
+	// the call, mirroring burn's cleanupGroupDataISOs pattern.
+	if err := os.Remove(imagePath); err != nil {
+		log.Printf("retrieve: cleaning up reconstruction image %s after folding into memory: %v", imagePath, err)
+	}
+
 	if r.NeedsMore() {
+		m.mu.Lock()
+		job.Err = nil
+		job.State = StateReconstructing
+		m.mu.Unlock()
 		return nil
 	}
 
 	image, err := r.Reconstruct()
 	if err != nil {
-		return err
+		return m.revertToReconstructing(job, err)
 	}
 	reconstructedPath := filepath.Join(m.scratchDir, job.DiskID+".reconstructed.iso")
 	if err := os.WriteFile(reconstructedPath, image, 0o644); err != nil {
-		return err
+		return m.revertToReconstructing(job, err)
 	}
 	defer os.Remove(reconstructedPath)
 
 	return m.readFrom(ctx, job, reconstructedPath)
+}
+
+// revertToReconstructing is used when ReadReconstructionDisc fails after
+// claiming StateReadingReconstructionDisc: it puts the job back into
+// StateReconstructing (rather than a terminal failure) with err recorded,
+// so Remaining() still reports what's needed and the user can simply try
+// inserting a disc again without losing progress already supplied to r.
+func (m *Manager) revertToReconstructing(job *Job, err error) error {
+	m.mu.Lock()
+	job.State = StateReconstructing
+	job.Err = err
+	m.mu.Unlock()
+	return err
 }

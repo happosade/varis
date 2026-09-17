@@ -2,6 +2,7 @@ package retrieve
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -170,6 +171,188 @@ func TestManager_ReadDisk_FileNotInTarRejected(t *testing.T) {
 		t.Fatalf("State = %s, want FAILED", mgr.Current().State)
 	}
 }
+
+// srcAwareDiscExecutor is like fakeDiscExecutor, but only serves files
+// when the requested src (the -indev device/image path) equals goodSrc.
+// Used to distinguish "reading the original physical device" (which
+// should fail, simulating damaged media) from "reading the reconstructed
+// .iso image" (which should succeed) within a single test, since
+// ReadReconstructionDisc/readFrom compute the reconstructed image's path
+// deterministically as "<scratchDir>/<job.DiskID>.reconstructed.iso".
+func srcAwareDiscExecutor(goodSrc string, files map[string][]byte) *execx.FakeExecutor {
+	return &execx.FakeExecutor{
+		Funcs: map[string]func(args []string) execx.Result{
+			"xorriso": func(args []string) execx.Result {
+				src := args[1]
+				pathInISO := args[3] // ["-indev", src, "-extract", pathInISO, destPath]
+				destPath := args[4]
+				if src != goodSrc {
+					return execx.Result{Err: os.ErrNotExist}
+				}
+				content, ok := files[pathInISO]
+				if !ok {
+					return execx.Result{Err: os.ErrNotExist}
+				}
+				os.WriteFile(destPath, content, 0o644)
+				return execx.Result{}
+			},
+			"par2verify": func(args []string) execx.Result { return execx.Result{} },
+		},
+	}
+}
+
+// TestManager_ReconstructionFlow_HappyPath exercises the full "disc failed,
+// reconstruct from group" recovery flow end-to-end: a 2-member group (one
+// data disc, one parity disc), a ReadDisk that fails against the physical
+// device (simulating damaged media), StartReconstruction, Remaining()
+// listing the surviving parity disc, ReadReconstructionDisc supplying it,
+// and the final readFrom succeeding against the reconstructed image.
+func TestManager_ReconstructionFlow_HappyPath(t *testing.T) {
+	retrievedDir := t.TempDir()
+	scratchDir := t.TempDir()
+	device := filepath.Join(t.TempDir(), "device")
+
+	// The missing disc is BD:0001 (a data disc); BD:0002 is its group's
+	// parity disc, the only other member — with just one data disc in the
+	// group, the parity disc's payload is that data disc's image
+	// zero-padded to capacity (see xordisk.XOR), so reconstruction from it
+	// alone recovers BD:0001's image exactly.
+	groupID := "g1"
+	cat := fakeCatalog{
+		files: map[string]db.FileRecord{
+			"file1": {ID: "file1", DiskID: "BD:0001", OriginalPath: "photo.jpg"},
+		},
+		disks: map[string]db.Disk{
+			"BD:0001": {ID: "BD:0001", MediaType: "BD-R", Role: "data", GroupID: &groupID, SlotIndex: intPtr(0)},
+			"BD:0002": {ID: "BD:0002", MediaType: "BD-R", Role: "parity", GroupID: &groupID, SlotIndex: intPtr(1)},
+		},
+	}
+
+	tocBytes, _ := toc.TOC{DiskID: "BD:0001", Compressed: false}.Marshal()
+	tarPath := filepath.Join(t.TempDir(), "src.tar")
+	writeTarFixture(t, tarPath, map[string]string{"photo.jpg": "bytes"})
+	tarBytes, err := os.ReadFile(tarPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The reconstructed image's path is deterministic: readFrom is always
+	// called with "<scratchDir>/<job.DiskID>.reconstructed.iso" once
+	// ReadReconstructionDisc finishes reconstructing. Only that path (not
+	// the physical device) serves BD:0001's TOC/tar/parity-index, so the
+	// initial ReadDisk against the device fails (needs reconstruction) and
+	// the later read against the reconstructed image succeeds.
+	reconstructedPath := filepath.Join(scratchDir, "BD:0001.reconstructed.iso")
+	ex := srcAwareDiscExecutor(reconstructedPath, map[string][]byte{
+		"/BD:0001.toc.json": tocBytes,
+		"/BD:0001.tar":       tarBytes,
+		"/BD:0001.tar.par2":  []byte("index"),
+	})
+
+	mgr := NewManager(cat, ex, retrievedDir, scratchDir, device)
+	if err := mgr.Start(context.Background(), "file1"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	if err := mgr.ReadDisk(context.Background()); err == nil {
+		t.Fatal("expected ReadDisk against the physical device to fail")
+	}
+	if mgr.Current().State != StateNeedsReconstruction {
+		t.Fatalf("State = %s, want NEEDS_RECONSTRUCTION", mgr.Current().State)
+	}
+
+	if err := mgr.StartReconstruction(context.Background()); err != nil {
+		t.Fatalf("StartReconstruction: %v", err)
+	}
+	if mgr.Current().State != StateReconstructing {
+		t.Fatalf("State = %s, want RECONSTRUCTING", mgr.Current().State)
+	}
+	remaining := mgr.Remaining()
+	if len(remaining) != 1 || remaining[0] != "BD:0002" {
+		t.Fatalf("Remaining() = %v, want [BD:0002]", remaining)
+	}
+
+	// Simulate physically inserting BD:0002 and reading it raw.
+	if err := os.WriteFile(device, bytes.Repeat([]byte{0xBB}, 1000), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.ReadReconstructionDisc(context.Background(), "BD:0002"); err != nil {
+		t.Fatalf("ReadReconstructionDisc: %v", err)
+	}
+
+	if mgr.Current().State != StateDone {
+		t.Fatalf("State = %s, want DONE (err=%v)", mgr.Current().State, mgr.Current().Err)
+	}
+	got, err := os.ReadFile(filepath.Join(retrievedDir, "photo.jpg"))
+	if err != nil {
+		t.Fatalf("reading retrieved file: %v", err)
+	}
+	if string(got) != "bytes" {
+		t.Errorf("content = %q, want bytes", got)
+	}
+	if _, err := os.Stat(filepath.Join(scratchDir, "BD:0002.img")); !os.IsNotExist(err) {
+		t.Errorf("expected per-member reconstruction image to be cleaned up, stat err = %v", err)
+	}
+	if _, err := os.Stat(reconstructedPath); !os.IsNotExist(err) {
+		t.Errorf("expected reconstructed image to be cleaned up, stat err = %v", err)
+	}
+}
+
+// TestManager_ReadReconstructionDisc_UnknownMemberReverts confirms that a
+// failure inside ReadReconstructionDisc (here, supplying a disc ID that
+// isn't a member of the group) records the error on the job and reverts
+// its state back to StateReconstructing — not stuck in the transient
+// "reading" state, and not silently ignored.
+func TestManager_ReadReconstructionDisc_UnknownMemberReverts(t *testing.T) {
+	retrievedDir := t.TempDir()
+	scratchDir := t.TempDir()
+	device := filepath.Join(t.TempDir(), "device")
+
+	groupID := "g1"
+	cat := fakeCatalog{
+		files: map[string]db.FileRecord{
+			"file1": {ID: "file1", DiskID: "BD:0001", OriginalPath: "photo.jpg"},
+		},
+		disks: map[string]db.Disk{
+			"BD:0001": {ID: "BD:0001", MediaType: "BD-R", Role: "data", GroupID: &groupID, SlotIndex: intPtr(0)},
+			"BD:0002": {ID: "BD:0002", MediaType: "BD-R", Role: "parity", GroupID: &groupID, SlotIndex: intPtr(1)},
+		},
+	}
+	ex := fakeDiscExecutor(nil) // ReadDisk against the device always fails here
+
+	mgr := NewManager(cat, ex, retrievedDir, scratchDir, device)
+	if err := mgr.Start(context.Background(), "file1"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := mgr.ReadDisk(context.Background()); err == nil {
+		t.Fatal("expected ReadDisk to fail")
+	}
+	if err := mgr.StartReconstruction(context.Background()); err != nil {
+		t.Fatalf("StartReconstruction: %v", err)
+	}
+
+	if err := os.WriteFile(device, bytes.Repeat([]byte{0xAA}, 1000), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.ReadReconstructionDisc(context.Background(), "BD:9999"); err == nil {
+		t.Fatal("expected error supplying an unknown group member")
+	}
+
+	job := mgr.Current()
+	if job.State != StateReconstructing {
+		t.Fatalf("State = %s, want RECONSTRUCTING", job.State)
+	}
+	if job.Err == nil {
+		t.Fatal("expected job.Err to be set")
+	}
+	// Remaining() still works — the reconstructor wasn't torn down.
+	remaining := mgr.Remaining()
+	if len(remaining) != 1 || remaining[0] != "BD:0002" {
+		t.Fatalf("Remaining() = %v, want [BD:0002]", remaining)
+	}
+}
+
+func intPtr(i int) *int { return &i }
 
 // writeTarFixture is a tiny local helper using archive/tar directly (not
 // exported from the burn package on purpose — retrieve's tests shouldn't
