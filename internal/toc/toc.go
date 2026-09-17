@@ -17,6 +17,7 @@ type TOC struct {
 	DiskID        string      `json:"disk_id"`
 	MediaType     string      `json:"media_type"`
 	ParityPercent int         `json:"parity_percent"`
+	Compressed    bool        `json:"compressed"`
 	GroupID       string      `json:"group_id,omitempty"`
 	Role          string      `json:"role"`
 	SlotIndex     int         `json:"slot_index,omitempty"`

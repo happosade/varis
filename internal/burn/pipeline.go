@@ -330,6 +330,7 @@ func (m *Manager) runDisc(ctx context.Context, job *Job, plan DiscPlan) error {
 		DiskID:        plan.DiskID,
 		MediaType:     job.Options.MediaType,
 		ParityPercent: job.Options.ParityPercent,
+		Compressed:    job.Options.Compress,
 		GroupID:       plan.GroupID,
 		Role:          plan.Role,
 		SlotIndex:     plan.SlotIndex,
