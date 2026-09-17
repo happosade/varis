@@ -37,3 +37,31 @@ func TestConnect_AppliesSchema(t *testing.T) {
 		t.Error("disks table was not created")
 	}
 }
+
+func TestConnect_AppliesStagedMetadataSchema(t *testing.T) {
+	pool := requirePool(t)
+	var exists bool
+	err := pool.QueryRow(context.Background(),
+		`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'staged_metadata')`).Scan(&exists)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if !exists {
+		t.Error("staged_metadata table was not created")
+	}
+
+	var hasTags, hasDescription bool
+	err = pool.QueryRow(context.Background(),
+		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'files' AND column_name = 'tags')`).Scan(&hasTags)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	err = pool.QueryRow(context.Background(),
+		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'files' AND column_name = 'description')`).Scan(&hasDescription)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if !hasTags || !hasDescription {
+		t.Errorf("files.tags/files.description not found (hasTags=%v hasDescription=%v)", hasTags, hasDescription)
+	}
+}

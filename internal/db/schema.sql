@@ -33,3 +33,14 @@ CREATE TABLE IF NOT EXISTS files (
 );
 
 CREATE INDEX IF NOT EXISTS idx_files_path ON files USING gin (original_path gin_trgm_ops);
+
+CREATE TABLE IF NOT EXISTS staged_metadata (
+    path        TEXT PRIMARY KEY,
+    tags        TEXT[] NOT NULL DEFAULT '{}',
+    description TEXT NOT NULL DEFAULT '',
+    updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+ALTER TABLE files ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE files ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_files_tags ON files USING gin (tags);
