@@ -5,6 +5,10 @@ package xordisk
 // all data discs) and to reconstruct one missing member (XOR of every
 // other member, parity disc included) — the same operation both ways,
 // which is the whole point of XOR parity.
+//
+// An image longer than length is silently truncated: bytes beyond length
+// are dropped without error. Callers must ensure no image exceeds length,
+// since a silently truncated image corrupts reconstruction.
 func XOR(images [][]byte, length int64) []byte {
 	out := make([]byte, length)
 	for _, img := range images {

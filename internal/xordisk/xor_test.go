@@ -29,3 +29,27 @@ func TestXOR_PadsShorterImagesWithZeros(t *testing.T) {
 		t.Errorf("XOR = %x, want %x", got, want)
 	}
 }
+
+func TestXOR_TruncatesLongerImages(t *testing.T) {
+	a := []byte{0x01, 0x02, 0x03, 0x04, 0xAA, 0xBB}
+	b := []byte{0x0F}
+
+	got := XOR([][]byte{a, b}, 4)
+	want := []byte{0x01 ^ 0x0F, 0x02, 0x03, 0x04}
+	if !bytes.Equal(got, want) {
+		t.Errorf("XOR = %x, want %x", got, want)
+	}
+}
+
+func TestXOR_ZeroLengthReturnsEmptySlice(t *testing.T) {
+	a := []byte{0x01, 0x02}
+	b := []byte{0x0F}
+
+	got := XOR([][]byte{a, b}, 0)
+	if got == nil {
+		t.Fatal("XOR returned nil, want non-nil empty slice")
+	}
+	if len(got) != 0 {
+		t.Errorf("len(XOR) = %d, want 0", len(got))
+	}
+}
