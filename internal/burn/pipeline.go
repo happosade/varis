@@ -3,6 +3,7 @@ package burn
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -43,6 +44,7 @@ type Options struct {
 	Compress        bool
 	CrossDiscParity bool
 	GroupSize       int
+	DryRun          bool
 }
 
 // DiscPlan is one disc's worth of work.
@@ -86,19 +88,21 @@ type Manager struct {
 	stagingDir string
 	spoolDir   string
 	device     string
+	dryRunDir  string
 	freeSpace  func(path string) (uint64, error)
 
 	mu  sync.Mutex
 	job *Job
 }
 
-func NewManager(cat Cataloger, ex execx.Executor, stagingDir, spoolDir, device string) *Manager {
+func NewManager(cat Cataloger, ex execx.Executor, stagingDir, spoolDir, device, dryRunDir string) *Manager {
 	return &Manager{
 		cat:        cat,
 		ex:         ex,
 		stagingDir: stagingDir,
 		spoolDir:   spoolDir,
 		device:     device,
+		dryRunDir:  dryRunDir,
 		freeSpace:  diskFreeBytes,
 	}
 }
@@ -368,13 +372,27 @@ func (m *Manager) runDisc(ctx context.Context, job *Job, plan DiscPlan) error {
 	}
 
 	m.setState(job, StateBurning)
-	if err := BurnISO(ctx, m.ex, m.device, isoPath); err != nil {
-		return fmt.Errorf("burn: %w", err)
-	}
+	if job.Options.DryRun {
+		// No physical media, so nothing to verify against — the file just
+		// copied here is exactly what gets cataloged, with no read-back
+		// round trip to introduce a discrepancy. StateVerifying is skipped
+		// entirely rather than reused, since there's genuinely no
+		// verification step happening.
+		if err := os.MkdirAll(m.dryRunDir, 0o755); err != nil {
+			return fmt.Errorf("dry run dir: %w", err)
+		}
+		if err := copyFile(filepath.Join(m.dryRunDir, plan.DiskID+".iso"), isoPath); err != nil {
+			return fmt.Errorf("dry run copy: %w", err)
+		}
+	} else {
+		if err := BurnISO(ctx, m.ex, m.device, isoPath); err != nil {
+			return fmt.Errorf("burn: %w", err)
+		}
 
-	m.setState(job, StateVerifying)
-	if err := VerifyBurn(ctx, m.ex, m.device, isoHash, filepath.Join(isoDir, filepath.Base(tarPath))); err != nil {
-		return fmt.Errorf("verify: %w", err)
+		m.setState(job, StateVerifying)
+		if err := VerifyBurn(ctx, m.ex, m.device, isoHash, filepath.Join(isoDir, filepath.Base(tarPath))); err != nil {
+			return fmt.Errorf("verify: %w", err)
+		}
 	}
 
 	if err := m.commitDisc(ctx, job, plan, isoHash); err != nil {
@@ -459,6 +477,26 @@ func removeStaleArtifacts(paths ...string) error {
 	return nil
 }
 
+// copyFile copies srcPath's contents to destPath via io.Copy (not
+// os.ReadFile/os.WriteFile) since a real ISO can be tens of gigabytes —
+// loading the whole thing into memory would be wasteful at best.
+func copyFile(destPath, srcPath string) error {
+	src, err := os.Open(srcPath)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	dst, err := os.Create(destPath)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+	if _, err := io.Copy(dst, src); err != nil {
+		return err
+	}
+	return dst.Close()
+}
+
 // movePathsInto moves any of paths that exist into destDir, skipping any
 // that don't (e.g. a .par2 volume file par2create didn't need to produce).
 func movePathsInto(destDir string, paths ...string) error {
@@ -489,6 +527,7 @@ func (m *Manager) commitDisc(ctx context.Context, job *Job, plan DiscPlan, isoHa
 		Role:          plan.Role,
 		SlotIndex:     slotIndex,
 		ISOHash:       isoHash,
+		IsDryRun:      job.Options.DryRun,
 	})
 	if err != nil {
 		return err

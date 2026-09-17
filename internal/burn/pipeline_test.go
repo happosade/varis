@@ -174,7 +174,7 @@ func TestManager_HappyPath_SingleDisc(t *testing.T) {
 
 	cat := newFakeCataloger()
 	ex := fakeExecutorForHappyPath(device)
-	mgr := NewManager(cat, ex, staging, spool, device)
+	mgr := NewManager(cat, ex, staging, spool, device, t.TempDir())
 	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil } // 1TB, plenty
 
 	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}
@@ -216,7 +216,7 @@ func TestManager_MultiDiscJob_BurnsSequentially(t *testing.T) {
 
 	cat := newFakeCataloger()
 	ex := fakeExecutorForHappyPath(device)
-	mgr := NewManager(cat, ex, staging, spool, device)
+	mgr := NewManager(cat, ex, staging, spool, device, t.TempDir())
 	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
 
 	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}
@@ -275,7 +275,7 @@ func TestManager_FailedStepLeavesStagingUntouchedAndAllowsRetry(t *testing.T) {
 	ex.Funcs["wodim"] = func(args []string) execx.Result {
 		return execx.Result{Err: fmt.Errorf("burn failed: bad disc")}
 	}
-	mgr := NewManager(cat, ex, staging, spool, device)
+	mgr := NewManager(cat, ex, staging, spool, device, t.TempDir())
 	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
 
 	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}
@@ -312,7 +312,7 @@ func TestManager_RejectsSecondJobWhileOneInProgress(t *testing.T) {
 	device := filepath.Join(t.TempDir(), "device")
 	writeStagingFile(t, staging, "photo.jpg", "some bytes")
 
-	mgr := NewManager(newFakeCataloger(), fakeExecutorForHappyPath(device), staging, spool, device)
+	mgr := NewManager(newFakeCataloger(), fakeExecutorForHappyPath(device), staging, spool, device, t.TempDir())
 	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
 
 	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}
@@ -330,7 +330,7 @@ func TestManager_RejectsWhenNotEnoughFreeSpace(t *testing.T) {
 	device := filepath.Join(t.TempDir(), "device")
 	writeStagingFile(t, staging, "photo.jpg", "some bytes")
 
-	mgr := NewManager(newFakeCataloger(), fakeExecutorForHappyPath(device), staging, spool, device)
+	mgr := NewManager(newFakeCataloger(), fakeExecutorForHappyPath(device), staging, spool, device, t.TempDir())
 	mgr.freeSpace = func(string) (uint64, error) { return 100, nil } // way too little
 
 	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}
@@ -349,7 +349,7 @@ func TestManager_CommitDisc_FoldsStagedMetadataIntoFileRecord(t *testing.T) {
 	cat.StagedMetadata["a.bin"] = db.StagedMetadata{Tags: []string{"family"}, Description: "a note"}
 	ex := fakeExecutorForHappyPath(device)
 
-	mgr := NewManager(cat, ex, staging, t.TempDir(), device)
+	mgr := NewManager(cat, ex, staging, t.TempDir(), device, t.TempDir())
 	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
 	if err := mgr.Start(context.Background(), Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -378,7 +378,7 @@ func TestManager_CommitDisc_UntaggedFileGetsEmptyMetadata(t *testing.T) {
 	cat := newFakeCataloger()
 	ex := fakeExecutorForHappyPath(device)
 
-	mgr := NewManager(cat, ex, staging, t.TempDir(), device)
+	mgr := NewManager(cat, ex, staging, t.TempDir(), device, t.TempDir())
 	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
 	if err := mgr.Start(context.Background(), Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -414,7 +414,7 @@ func TestManager_Current_SafeForConcurrentReadsDuringBurn(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		return slowXorriso(args)
 	}
-	mgr := NewManager(cat, ex, staging, spool, device)
+	mgr := NewManager(cat, ex, staging, spool, device, t.TempDir())
 	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
 
 	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}
@@ -658,7 +658,7 @@ func TestManager_ContinueNextDisc_ConcurrentCallsRunExactlyOnce(t *testing.T) {
 
 	cat := newFakeCataloger()
 	ex := fakeExecutorForHappyPath(device)
-	mgr := NewManager(cat, ex, staging, spool, device)
+	mgr := NewManager(cat, ex, staging, spool, device, t.TempDir())
 	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
 
 	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}
@@ -711,7 +711,7 @@ func TestManager_BurnsGroupWithParityDisc(t *testing.T) {
 
 	cat := newFakeCataloger()
 	ex := fakeExecutorWithContentAwareISO(device)
-	mgr := NewManager(cat, ex, staging, spool, device)
+	mgr := NewManager(cat, ex, staging, spool, device, t.TempDir())
 	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
 
 	opts := Options{
@@ -815,7 +815,7 @@ func TestManager_ParityPayload_DoesNotLeakAcrossGroups(t *testing.T) {
 
 	cat := newFakeCataloger()
 	ex := fakeExecutorWithContentAwareISO(device)
-	mgr := NewManager(cat, ex, staging, spool, device)
+	mgr := NewManager(cat, ex, staging, spool, device, t.TempDir())
 	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
 
 	opts := Options{
@@ -884,5 +884,55 @@ func TestManager_ParityPayload_DoesNotLeakAcrossGroups(t *testing.T) {
 	// group's parity disc leaked in the other group's data.
 	if bytes.Equal(parityPayloads[0], parityPayloads[1]) {
 		t.Fatalf("the two groups' parity payloads are identical (%x) — suggests cross-group leakage", parityPayloads[0])
+	}
+}
+
+func TestManager_DryRun_CopiesISOInsteadOfBurning(t *testing.T) {
+	staging := t.TempDir()
+	writeStagingFile(t, staging, "a.bin", "hello")
+	dryRunDir := t.TempDir()
+
+	cat := newFakeCataloger()
+	ex := fakeExecutorForHappyPath(filepath.Join(t.TempDir(), "device")) // registers par2create/xorriso/par2verify; wodim would just no-op if called, so we separately assert it never is
+
+	mgr := NewManager(cat, ex, staging, t.TempDir(), t.TempDir()+"/device", dryRunDir)
+	mgr.freeSpace = func(string) (uint64, error) { return 1 << 40, nil }
+
+	opts := Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10, DryRun: true}
+	if err := mgr.Start(context.Background(), opts); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := mgr.ContinueNextDisc(context.Background()); err != nil {
+		t.Fatalf("ContinueNextDisc: %v", err)
+	}
+
+	job := mgr.Current()
+	if job.State != StateDone {
+		t.Fatalf("State = %s, want DONE (err=%v)", job.State, job.Err)
+	}
+
+	for _, call := range ex.Calls() {
+		if call.Name == "wodim" {
+			t.Fatal("expected wodim to never be called for a dry-run burn")
+		}
+	}
+
+	if len(cat.Disks) != 1 {
+		t.Fatalf("Disks = %+v, want exactly 1", cat.Disks)
+	}
+	if !cat.Disks[0].IsDryRun {
+		t.Error("expected the committed disk to have IsDryRun = true")
+	}
+
+	isoPath := filepath.Join(dryRunDir, cat.Disks[0].ID+".iso")
+	if _, err := os.Stat(isoPath); err != nil {
+		t.Errorf("expected the dry-run ISO at %s: %v", isoPath, err)
+	}
+
+	if len(cat.Files) != 1 || cat.Files[0].OriginalPath != "a.bin" {
+		t.Errorf("Files = %+v, want exactly a.bin committed", cat.Files)
+	}
+	if _, err := os.Stat(filepath.Join(staging, "a.bin")); !os.IsNotExist(err) {
+		t.Error("expected a.bin to be removed from staging after a dry-run burn, same as a real one")
 	}
 }

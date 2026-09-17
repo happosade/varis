@@ -273,7 +273,7 @@ func TestEndToEnd_BurnGroupLoseADiscReconstruct(t *testing.T) {
 	ex := sharedFakeExecutor(shelf)
 
 	// --- Burn: 2 data discs (1 file each) + 1 parity disc for the group ---
-	burnMgr := burn.NewManager(store, ex, staging, spool, device)
+	burnMgr := burn.NewManager(store, ex, staging, spool, device, t.TempDir())
 	burnOpts := burn.Options{
 		MediaType:       "BD-R",
 		CapacityBytes:   testCapacityBytes, // forces exactly 1 file per data disc

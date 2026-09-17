@@ -95,7 +95,7 @@ func TestStartBurn_RejectedWhileRetrievalInProgress(t *testing.T) {
 	if err := writeFixtureFile(staging, "a.bin", "some bytes"); err != nil {
 		t.Fatal(err)
 	}
-	burnMgr := burn.NewManager(&stubCataloger{}, &execx.FakeExecutor{}, staging, t.TempDir(), t.TempDir()+"/device")
+	burnMgr := burn.NewManager(&stubCataloger{}, &execx.FakeExecutor{}, staging, t.TempDir(), t.TempDir()+"/device", t.TempDir())
 
 	retrieveMgr := retrieve.NewManager(stubCatalog{
 		files: map[string]db.FileRecord{"f1": {ID: "f1", DiskID: "BD:0001", OriginalPath: "a.bin"}},
@@ -125,7 +125,7 @@ func TestStartRetrieve_RejectedWhileBurnInProgress(t *testing.T) {
 	if err := writeFixtureFile(staging, "a.bin", "some bytes"); err != nil {
 		t.Fatal(err)
 	}
-	burnMgr := burn.NewManager(&stubCataloger{}, &execx.FakeExecutor{}, staging, t.TempDir(), t.TempDir()+"/device")
+	burnMgr := burn.NewManager(&stubCataloger{}, &execx.FakeExecutor{}, staging, t.TempDir(), t.TempDir()+"/device", t.TempDir())
 	if err := burnMgr.Start(context.Background(), burn.Options{MediaType: "BD-R", CapacityBytes: 1000, ParityPercent: 10}); err != nil {
 		t.Fatalf("burnMgr.Start: %v", err)
 	}
