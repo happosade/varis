@@ -32,8 +32,8 @@ func main() {
 	ex := execx.RealExecutor{}
 	scratchDir := os.TempDir()
 
-	burnMgr := burn.NewManager(burn.NewDBCataloger(pool), ex, cfg.StagingDir, cfg.SpoolDir, cfg.OpticalDevice)
-	retrieveMgr := retrieve.NewManager(retrieve.NewDBCatalog(pool), ex, cfg.RetrievedDir, scratchDir, cfg.OpticalDevice)
+	burnMgr := burn.NewManager(burn.NewDBCataloger(pool), ex, cfg.StagingDir, cfg.SpoolDir, cfg.OpticalDevice, cfg.DryRunDir)
+	retrieveMgr := retrieve.NewManager(retrieve.NewDBCatalog(pool), ex, cfg.RetrievedDir, scratchDir, cfg.OpticalDevice, cfg.DryRunDir)
 
 	webServer, err := web.NewServer(pool, burnMgr, retrieveMgr, cfg.StagingDir)
 	if err != nil {
@@ -46,6 +46,7 @@ func main() {
 	})
 	mux.Handle("/webdav/staging/", http.StripPrefix("/webdav/staging", webdav.Handler("/", cfg.StagingDir)))
 	mux.Handle("/webdav/retrieved/", http.StripPrefix("/webdav/retrieved", webdav.Handler("/", cfg.RetrievedDir)))
+	mux.Handle("/webdav/dryrun/", http.StripPrefix("/webdav/dryrun", webdav.Handler("/", cfg.DryRunDir)))
 	webServer.Routes(mux)
 
 	log.Printf("listening on %s", cfg.HTTPAddr)
