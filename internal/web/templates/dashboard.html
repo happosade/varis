@@ -5,6 +5,10 @@
 <body>
 {{template "nav"}}
 <h1>To-Archive</h1>
+<p>Mount all archive files over WebDAV at <code>{{.MountURL}}</code> —
+on macOS: Finder → <kbd>Cmd+K</kbd> → Connect to Server → paste that URL.
+Inside, you'll find <code>staging/</code>, <code>retrieved/</code>, and
+<code>dryrun/</code> folders.</p>
 <p>Staged: {{.StagedBytes}} bytes.</p>
 {{template "staging-files-fragment" .StagedFiles}}
 
@@ -34,11 +38,11 @@
 <div id="staging-files">
 <form hx-post="/staging/metadata" hx-target="#staging-files" hx-swap="outerHTML">
 {{range .}}
-  <fieldset>
+  <details open>
     {{if .Name}}
-    <legend><label><input type="checkbox" name="path" value="{{.Name}}/"> {{.Name}}/</label></legend>
+    <summary><label><input type="checkbox" name="path" value="{{.Name}}/"> {{.Name}}/</label></summary>
     {{else}}
-    <legend>(root)</legend>
+    <summary>(root)</summary>
     {{end}}
     <table>
       <thead><tr><th></th><th>File</th><th>Size</th><th>Tags</th><th>Description</th></tr></thead>
@@ -54,7 +58,7 @@
       {{end}}
       </tbody>
     </table>
-  </fieldset>
+  </details>
 {{end}}
   <label>Tags (comma-separated) <input type="text" name="tags"></label>
   <label>Description <input type="text" name="description"></label>

@@ -12,6 +12,7 @@ type dashboardData struct {
 	StagedFiles []stagedFolderGroup
 	MediaTypes  []db.MediaType
 	Job         *jobView
+	MountURL    string
 }
 
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
@@ -35,6 +36,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		StagedFiles: stagedFiles,
 		MediaTypes:  types,
 		Job:         s.currentJobView(),
+		MountURL:    "http://" + r.Host + "/webdav/",
 	}
 	s.render(w, "dashboard", data)
 }
