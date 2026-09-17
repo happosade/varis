@@ -192,3 +192,39 @@ func TestGetMediaTypeCapacity(t *testing.T) {
 		t.Errorf("capacity = %d, want 25025314816", capacity)
 	}
 }
+
+func TestSearchFiles_ExposesDiskIsDryRun(t *testing.T) {
+	pool := requirePool(t)
+	ctx := context.Background()
+	if err := SeedMediaTypes(ctx, pool); err != nil {
+		t.Fatalf("SeedMediaTypes: %v", err)
+	}
+	id, err := NextDiskID(ctx, pool, "BDDRYSEARCH", 0)
+	if err != nil {
+		t.Fatalf("NextDiskID: %v", err)
+	}
+	if err := InsertDisk(ctx, pool, Disk{ID: id, MediaType: "BD-R", ParityPercent: 10, Role: "data", IsDryRun: true}); err != nil {
+		t.Fatalf("InsertDisk: %v", err)
+	}
+	term := "dryrunsearch-" + id
+	if err := InsertFile(ctx, pool, FileRecord{DiskID: id, OriginalPath: term + ".jpg", SizeBytes: 1}); err != nil {
+		t.Fatalf("InsertFile: %v", err)
+	}
+
+	results, err := SearchFiles(ctx, pool, term)
+	if err != nil {
+		t.Fatalf("SearchFiles: %v", err)
+	}
+	found := false
+	for _, f := range results {
+		if f.OriginalPath == term+".jpg" {
+			found = true
+			if !f.DiskIsDryRun {
+				t.Errorf("DiskIsDryRun = false, want true for a file on a dry-run disc")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected to find the inserted file in search results")
+	}
+}

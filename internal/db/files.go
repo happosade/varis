@@ -17,6 +17,7 @@ type FileRecord struct {
 	FileHash     string
 	Tags         []string
 	Description  string
+	DiskIsDryRun bool
 }
 
 func InsertFile(ctx context.Context, pool *pgxpool.Pool, f FileRecord) error {
@@ -55,14 +56,15 @@ func GetFile(ctx context.Context, pool *pgxpool.Pool, id string) (FileRecord, er
 // (tens of thousands of files, not millions); revisit if that changes.
 func SearchFiles(ctx context.Context, pool *pgxpool.Pool, query string) ([]FileRecord, error) {
 	rows, err := pool.Query(ctx,
-		`SELECT id, disk_id, original_path, size_bytes, file_hash, tags, description FROM files
-		 WHERE original_path ILIKE '%' || $1 || '%'
-		    OR description ILIKE '%' || $1 || '%'
-		    OR array_to_string(tags, ' ') ILIKE '%' || $1 || '%'
+		`SELECT f.id, f.disk_id, f.original_path, f.size_bytes, f.file_hash, f.tags, f.description, d.is_dry_run
+		 FROM files f JOIN disks d ON d.id = f.disk_id
+		 WHERE f.original_path ILIKE '%' || $1 || '%'
+		    OR f.description ILIKE '%' || $1 || '%'
+		    OR array_to_string(f.tags, ' ') ILIKE '%' || $1 || '%'
 		 ORDER BY GREATEST(
-		     similarity(original_path, $1),
-		     similarity(description, $1),
-		     similarity(array_to_string(tags, ' '), $1)
+		     similarity(f.original_path, $1),
+		     similarity(f.description, $1),
+		     similarity(array_to_string(f.tags, ' '), $1)
 		 ) DESC LIMIT 50`, query)
 	if err != nil {
 		return nil, err
@@ -71,7 +73,7 @@ func SearchFiles(ctx context.Context, pool *pgxpool.Pool, query string) ([]FileR
 	var out []FileRecord
 	for rows.Next() {
 		var f FileRecord
-		if err := rows.Scan(&f.ID, &f.DiskID, &f.OriginalPath, &f.SizeBytes, &f.FileHash, &f.Tags, &f.Description); err != nil {
+		if err := rows.Scan(&f.ID, &f.DiskID, &f.OriginalPath, &f.SizeBytes, &f.FileHash, &f.Tags, &f.Description, &f.DiskIsDryRun); err != nil {
 			return nil, err
 		}
 		out = append(out, f)

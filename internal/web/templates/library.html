@@ -23,7 +23,7 @@
 <tr>
   <td>{{.OriginalPath}}</td>
   <td>{{.SizeBytes}}</td>
-  <td>{{.DiskID}}</td>
+  <td>{{.DiskID}}{{if .DiskIsDryRun}} <strong>[DRY RUN]</strong>{{end}}</td>
   <td>{{range .Tags}}<span class="tag">{{.}}</span>{{end}}{{if .Description}} <em>{{.Description}}</em>{{end}}</td>
   <td>
     <form hx-post="/retrieve" hx-target="#retrieve-status" hx-swap="innerHTML">
