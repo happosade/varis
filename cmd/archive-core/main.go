@@ -44,9 +44,11 @@ func main() {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
 	})
-	mux.Handle("/webdav/staging/", http.StripPrefix("/webdav/staging", webdav.Handler("/", cfg.StagingDir)))
-	mux.Handle("/webdav/retrieved/", http.StripPrefix("/webdav/retrieved", webdav.Handler("/", cfg.RetrievedDir)))
-	mux.Handle("/webdav/dryrun/", http.StripPrefix("/webdav/dryrun", webdav.Handler("/", cfg.DryRunDir)))
+	mux.Handle("/webdav/", http.StripPrefix("/webdav", webdav.CombinedHandler(map[string]string{
+		"staging":   cfg.StagingDir,
+		"retrieved": cfg.RetrievedDir,
+		"dryrun":    cfg.DryRunDir,
+	})))
 	webServer.Routes(mux)
 
 	log.Printf("listening on %s", cfg.HTTPAddr)
