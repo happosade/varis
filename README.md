@@ -118,7 +118,7 @@ Defined in `internal/web/server.go`:
 | `POST /jobs/continue` | "Next blank disc is inserted, continue" |
 | `POST /jobs/retry` | Retry the current disc after a failure |
 | `GET /library` | Search page |
-| `GET /search?q=` | Search results: filename, required disk ID, tags/description, Get button — matches path, tags, and description |
+| `GET /search?q=` | Search results: filename, size, required disk ID, Get button — matches path, tags, and description |
 | `POST /retrieve` | Start a retrieval |
 | `POST /retrieve/read` | "Disc is inserted, read it" |
 | `POST /retrieve/reconstruct/start` | Begin group reconstruction |
