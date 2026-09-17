@@ -32,8 +32,8 @@ func main() {
 	ex := execx.RealExecutor{}
 	scratchDir := os.TempDir()
 
-	burnMgr := burn.NewManager(burn.NewDBCataloger(pool), ex, cfg.StagingDir, cfg.SpoolDir, cfg.OpticalDevice, cfg.DryRunDir)
-	retrieveMgr := retrieve.NewManager(retrieve.NewDBCatalog(pool), ex, cfg.RetrievedDir, scratchDir, cfg.OpticalDevice, cfg.DryRunDir)
+	burnMgr := burn.NewManager(burn.NewDBCataloger(pool), ex, cfg.StagingDir, cfg.SpoolDir, cfg.DryRunDir)
+	retrieveMgr := retrieve.NewManager(retrieve.NewDBCatalog(pool), ex, cfg.RetrievedDir, scratchDir, cfg.DryRunDir)
 
 	webServer, err := web.NewServer(pool, burnMgr, retrieveMgr, cfg.StagingDir, cfg.DryRunDir)
 	if err != nil {
