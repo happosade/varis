@@ -11,6 +11,8 @@ There are two independent layers of redundancy:
 
 The full design rationale — data model, state machines, error handling, non-goals — lives in [`docs/superpowers/specs/2026-09-16-optical-disc-archive-design.md`](docs/superpowers/specs/2026-09-16-optical-disc-archive-design.md). Read that for the complete picture.
 
+The [Varis handbook](docs/handbook/varis-handbook.pdf) describes the system as built: UML diagrams of the deployment, catalog schema and both state machines, requirements, decision records, operator checklists, and open findings where the code and its docs disagree. Rebuild it from [`docs/handbook/varis-handbook.tex`](docs/handbook/varis-handbook.tex) with `xelatex varis-handbook.tex` (run twice, inside `docs/handbook/`).
+
 ## Requirements
 
 - **`archive-core` must run on a Linux host with real Docker**, because the optical drive is passed into the container as a device (`--device /dev/sr0`). Docker Desktop on macOS/Windows cannot do this.
