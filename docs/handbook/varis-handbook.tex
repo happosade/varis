@@ -1,0 +1,912 @@
+\documentclass[handbook]{nasa-handbook}
+
+\nhsetup{
+  doc         = {VR2A-04-VARIS-(1)},
+  title       = {VARIS OPTICAL DISC ARCHIVE HANDBOOK},
+  part        = {SYSTEMS ENGINEERING},
+  issuer      = {PROJECT VARIS · SELF-HOSTED ARCHIVE SYSTEMS},
+  basic date  = {16 Sep 2026},
+  change date = {18 Sep 2026},
+  mission     = {},
+}
+
+\makeatletter
+\renewcommand\nh@tabcap[2]{{\centering\nhspace{7}Table #1. #2\par}\nh@lot{#1}{#2}\nopagebreak\vspace{0.8mm}\nh@tablefont}
+\RenewDocumentEnvironment{nhbox}{m}
+  {\nh@lob{#1}\begin{lrbox}{\nh@card}\begin{minipage}{\dimexpr\linewidth-4mm-1.6pt}%
+    {\centering\bfseries\nhspace{12}#1\par}\vspace{1.2mm}\fontsize{7.4pt}{9.47pt}\selectfont\setlength\parindent{0pt}}
+  {\par\end{minipage}\end{lrbox}\par\nointerlineskip\hrule height0pt\nobreak\vskip1.6mm\relax
+    {\setlength\fboxsep{2mm}\setlength\fboxrule{0.8pt}\noindent\fbox{\usebox\nh@card}}\par}
+\makeatother
+
+% \umltable{x}{y}{width}{rows}{NAME}{{attr},{attr},...}
+\newcommand\umltable[6]{%
+  \path[box] (#1,#2) rectangle ++(#3,{10+#4*2.9});
+  \node[lbl-s,c] at ({#1+#3/2},{#2+3.4}) {«TABLE»};
+  \node[lbl,c] at ({#1+#3/2},{#2+7}) {#5};
+  \path[t] (#1,{#2+8.4}) -- ++(#3,0);
+  \foreach \a [count=\i] in {#6} \node[lbl-s] at ({#1+2},{#2+8.6+\i*2.9}) {\a};
+}
+% \umlcomp{x}{y}{STEREOTYPE}{NAME}{DETAIL}: a 32 x 14 component box
+\newcommand\umlcomp[5]{%
+  \path[box] (#1,#2) rectangle ++(32,14);
+  \node[lbl-s,c] at ({#1+15},{#2+4.4}) {#3};
+  \node[lbl,c] at ({#1+16},{#2+8.2}) {#4};
+  \node[lbl-s,c] at ({#1+16},{#2+11.4}) {#5};
+  \path[draw,fill=white,line width=0.2mm] ({#1+27.4},{#2+1.4}) rectangle ++(3.2,4.2);
+  \path[draw,fill=white,line width=0.2mm] ({#1+26.6},{#2+2.2}) rectangle ++(1.6,0.8) ({#1+26.6},{#2+4}) rectangle ++(1.6,0.8);
+}
+% \umlstate{x}{y}{w}{NAME}{DO line or empty}: a 14 mm tall state
+\newcommand\umlstate[5]{%
+  \path[state] (#1,#2) rectangle ++(#3,14);
+  \ifx\relax#5\relax
+    \node[lbl,c] at ({#1+#3/2},{#2+8}) {#4};
+  \else
+    \node[lbl,c] at ({#1+#3/2},{#2+5.6}) {#4};
+    \path[t] (#1,{#2+8}) -- ++(#3,0);
+    \node[lbl-s,c] at ({#1+#3/2},{#2+12}) {#5};
+  \fi
+}
+% \lifeline{x}{NAME}{bottom}
+\newcommand\lifeline[3]{%
+  \path[box] ({#1-13},2) rectangle ({#1+13},9);
+  \node[lbl,c] at (#1,6.6) {#2};
+  \path[hid] (#1,9) -- (#1,#3);
+}
+\newcommand\xorop[2]{%
+  \path[draw,line width=0.25mm] (#1,#2) circle[radius=1.3];
+  \path[draw,line width=0.25mm] ({#1-1.3},#2) -- ({#1+1.3},#2) (#1,{#2-1.3}) -- (#1,{#2+1.3});
+}
+
+\begin{document}
+
+\nhcover
+
+\begin{nhhistory}
+  \nhhist{Basic}{}{Design specification; data layer, burn pipeline and bin packing.}{16 Sep 2026}
+  \nhhist{}{1}{Cross-disc XOR parity, retrieval and group reconstruction; web UI and HTTP handlers.}{17 Sep 2026}
+  \nhhist{}{2}{Staged file listing; tags and description carried into the catalog.}{17 Sep 2026}
+  \nhhist{}{3}{Dry-run burn mode; media types gain ID prefix and write kind; per-burn target path.}{17 Sep 2026}
+  \nhhist{}{4}{Single WebDAV root for staging, retrieved and dryrun; collapsible staging folders.}{17 Sep 2026}
+  \nhhist{A}{}{Pull request \#1 merged; continuous integration builds and publishes the container image.}{18 Sep 2026}
+  \nhhist{A}{5}{This handbook issued, describing the system as of commit 2c60c60.}{5 Nov 2026}
+\end{nhhistory}
+
+\nhcontents
+
+\nhchapter*{PREFACE}
+This handbook describes Varis, a self-hosted system that archives files onto optical discs and finds them again. It is written for the operator who runs the system and for the engineer who changes it. It explains what each part does, why it was built that way, and how to operate it.
+
+Every number in this handbook was checked against the source code at commit 2c60c60. Where the code and the earlier design documents disagree, the handbook follows the code and says so. Section 7.3 lists the places where the code does not yet do what its own documents promise.
+
+The handbook does not cover the Go language, PostgreSQL administration, or the internals of par2, xorriso and wodim. Comments go to the repository as issues.
+
+% ============================================================
+\nhchapter[INT]{INTRODUCTION}
+
+\begin{nhpara}{1.1}{PURPOSE.}
+Varis moves files from a network share onto numbered optical discs and keeps a searchable catalog of where each file went. The one idea is this: every file is written to exactly one disc, that disc carries its own repair data, a group of discs can carry a spare disc made of their XOR, and the catalog names the disc to insert when the file is wanted again.
+\end{nhpara}
+
+\begin{nhpara}{1.2}{SCOPE AND APPLICATION.}
+The handbook covers the single Go binary \textit{archive-core}, its PostgreSQL catalog, the burn and retrieval state machines, the web user interface (UI) and the Web Distributed Authoring and Versioning (WebDAV) shares. It applies to one operator on a trusted home network with one drive. Multi-drive operation, encryption, authentication and replacement of a reconstructed disc are outside the scope of the system and of this handbook. Abbreviations are listed in Appendix A and terms in Appendix B.
+\end{nhpara}
+
+\nhnotice{NOTE}{Varis has no authentication. Anyone who can reach port 8080 can read, stage, burn and delete. Run it only on a trusted local network.}
+
+% ============================================================
+\nhchapter[DOC]{DOCUMENTS}
+
+\begin{nhpara}{2.1}{APPLICABLE DOCUMENTS.}
+The following documents form a part of this handbook to the extent specified herein. They are kept in the repository under \nowrap{docs/superpowers/specs/}.
+
+2026-09-16\hspace{6mm}Optical Disc Archive, Design Spec
+
+2026-09-17\hspace{6mm}Staged File Listing and Metadata, Design Spec
+
+2026-09-17\hspace{6mm}Dry-Run Burn Mode, Design Spec
+
+2026-09-17\hspace{6mm}Generalized Media/Drive Abstraction, Design Spec
+
+2026-09-17\hspace{6mm}Unified WebDAV Mount, Design Spec
+
+README.md\hspace{6mm}Varis, setup and usage
+\end{nhpara}
+
+\begin{nhpara}{2.2}{REFERENCE DOCUMENTS.}
+The following documents contain supplemental information.
+
+ISO 9660\hspace{6mm}Volume and File Structure of CDROM for Information Interchange
+
+RFC 4918\hspace{6mm}HTTP Extensions for Web Distributed Authoring and Versioning
+
+par2cmdline\hspace{6mm}Parity Volume Set Specification 2.0 tools
+
+NASA/SP-2016-6105\hspace{6mm}NASA Systems Engineering Handbook, Rev 2 (structure of this handbook)
+
+KSC-DF-107\hspace{6mm}Technical Documentation Style Guide (writing rules of this handbook)
+\end{nhpara}
+
+% ============================================================
+\nhchapter[SYS]{SYSTEM OVERVIEW}
+
+\begin{nhpara}{3.1}{ARCHITECTURE.}
+Varis runs as two containers on one Linux host under Docker Compose (figure 3-1). The \textit{archive-core} container holds the web server, the WebDAV server and both job managers in one process. The \textit{archive-db} container runs PostgreSQL 16 and holds the catalog. The operator's workstation is a client only: it mounts the WebDAV root and opens the web pages. The optical drive is passed into \textit{archive-core} as a device, which is why the host must run Docker natively on Linux.
+\end{nhpara}
+
+\begin{nhfigure}{80}{3-1}{Varis Deployment and Component Diagram}{SYS-501A}
+  \path[panel] (1.5,2.5) rectangle (46,76);
+  \node[lbl-s] at (3.4,5.6) {«NODE» OPERATOR WORKSTATION};
+  \umlcomp{4}{15}{«COMPONENT»}{WEBDAV CLIENT}{FINDER, DAVFS2}
+  \umlcomp{4}{36}{«COMPONENT»}{WEB BROWSER}{HTMX, POLL 2 S}
+  \path[panel] (52,2.5) rectangle (178.5,76);
+  \node[lbl-s] at (54,5.6) {«NODE» LINUX HOST, DOCKER COMPOSE};
+  \path[panel] (56,8.6) rectangle (134,72.6);
+  \node[lbl-s] at (58,12.1) {«CONTAINER» ARCHIVE-CORE (GO 1.26)};
+  \umlcomp{60}{15}{«COMPONENT»}{WEBDAV}{COMBINEDFILESYSTEM}
+  \umlcomp{98}{15}{«COMPONENT»}{BURN.MANAGER}{PLAN, PACK, BURN}
+  \umlcomp{60}{36}{«COMPONENT»}{WEB.SERVER}{NET/HTTP, TEMPLATES}
+  \umlcomp{98}{36}{«COMPONENT»}{EXECX.EXECUTOR}{PAR2, XORRISO, WODIM}
+  \umlcomp{60}{57}{«LIBRARY»}{BINPACK, TOC}{XORDISK}
+  \umlcomp{98}{57}{«COMPONENT»}{RETRIEVE.MANAGER}{READ, VERIFY, REBUILD}
+  \path[dep] (92,40) -- (95,40) -- (95,22) -- (97.6,22);
+  \path[dep] (92,46) -- (95,46) -- (95,64) -- (97.6,64);
+  \path[dep] (114,29) -- (114,35.6);
+  \path[dep] (114,57) -- (114,50.4);
+  \path[wa] (36,22) -- (59.6,22);
+  \node[lbl-s,c] at (41,21.0) {WEBDAV};
+  \path[wa] (36,43) -- (59.6,43);
+  \node[lbl-s,c] at (41,42.0) {HTTP};
+  \path[box,from svg] svg{M150,16 L150,28 A12.5,1.8 0 0 0 175,28 L175,16};
+  \path[box] (162.5,16) ellipse[x radius=12.5,y radius=1.8];
+  \node[lbl-b,c] at (162.5,23) {ARCHIVE-DB};
+  \node[lbl-s,c] at (162.5,26.2) {POSTGRES 16};
+  \path[wa] (134,22) -- (149.6,22);
+  \node[lbl-s,c] at (141.8,21.0) {SQL};
+  \path[box,from svg] svg{M150,37 L150,49 A12.5,1.8 0 0 0 175,49 L175,37};
+  \path[box] (162.5,37) ellipse[x radius=12.5,y radius=1.8];
+  \node[lbl-b,c] at (162.5,44) {/DATA};
+  \node[lbl-s,c] at (162.5,47.2) {BIND MOUNTS};
+  \path[wa] (134,43) -- (149.6,43);
+  \node[lbl-s,c] at (141.8,42.0) {FILES};
+  \path[box] (150,57) rectangle (175,71);
+  \node[lbl-s,c] at (162.5,61.4) {«DEVICE»};
+  \node[lbl,c] at (162.5,65.2) {OPTICAL DRIVE};
+  \node[lbl-s,c] at (162.5,68.4) {/DEV/SR0};
+  \path[wa] (134,64) -- (149.6,64);
+  \node[lbl-s,c] at (141.8,63.0) {SCSI};
+\end{nhfigure}
+
+\begin{nhpara}{3.2}{PACKAGES.}
+The source is divided into Go packages with one job each (table 3-1). The two managers depend on the executor interface, not on \textit{os/exec}, so the state machines run in tests without a drive or the external tools.
+\end{nhpara}
+
+\begin{nhgrid}{3-1}{Package Responsibilities}{|l|X|}{\multicolumn{1}{|c|}{Package}&\multicolumn{1}{c|}{Responsibility}}
+  cmd/archive-core&Loads configuration, connects to the catalog, seeds media types, mounts WebDAV, registers routes and listens.\\\hline
+  internal/config&Reads seven environment variables with defaults (table 8-1).\\\hline
+  internal/db&Embedded schema, applied on every start; queries for media types, disks, groups, files and staged metadata.\\\hline
+  internal/binpack&Scans the staging tree and packs files into disc-sized buckets.\\\hline
+  internal/toc&The \nowrap{TOC.json} disc header: marshal and parse.\\\hline
+  internal/burn&The burn state machine; tar, par2, ISO, write, verify, XOR parity and reconstruction.\\\hline
+  internal/retrieve&The retrieval state machine, including group reconstruction.\\\hline
+  internal/xordisk&One function: pad images to a length and XOR them together.\\\hline
+  internal/execx&Executor interface over \textit{os/exec}, and a fake for tests.\\\hline
+  internal/webdav&One WebDAV root serving staging, retrieved and dryrun as folders.\\\hline
+  internal/web&HTTP handlers and the embedded HTML templates.\\\hline
+\end{nhgrid}
+
+\begin{nhpara}{3.3}{PROTECTION LAYERS.}
+Each disc is protected twice (figure 3-2). Inside the disc, a par2 set sized at P percent of the payload guards against bit rot in part of the disc. Across discs, an optional parity disc holds the XOR of every data disc image in its group, so the loss of any one whole disc in the group can be repaired from the others.
+\end{nhpara}
+
+\begin{nhsubpara}{3.3.1}{Data Budget.}
+A data disc of capacity C at parity P receives at most \nowrap{C × 100 / (100 + P)} bytes of files. A BD-R at 10 percent therefore takes 22,750,286,196 bytes of files.
+\end{nhsubpara}
+
+\begin{nhfigure}{76}{3-2}{Disc Image Layout and Cross-Disc Parity}{SYS-502A}
+  \node[lbl-b] at (2,4) {A. DATA DISC IMAGE, ISO 9660};
+  \node[lbl-s] at (2,11.6) {DISC BD:0007};
+  \path[aud] (34,8) rectangle (146,13.4);
+  \node[lbl-s,c] at (90,11.6) {/BD:0007.TAR (GZIP IF COMPRESSED)};
+  \path[aud] (146,8) rectangle (160,13.4);
+  \node[lbl-s,c] at (153,11.6) {.PAR2};
+  \path[aud] (160,8) rectangle (168,13.4);
+  \node[lbl-s,c] at (164,11.6) {TOC};
+  \path[gap] (168,8) rectangle (174,13.4);
+  \path[t] (34,13.4) -- (34,22.4);
+  \path[t] (146,13.4) -- (146,17.6);
+  \path[t] (174,13.4) -- (174,22.4);
+  \path[dim] (34,16.6) -- (72,16.6);
+  \path[dim] (146,16.6) -- (108,16.6);
+  \node[lbl,c] at (90,17.4) {DATA ≤ C × 100 / (100 + P)};
+  \path[dim] (34,21.2) -- (90,21.2);
+  \path[dim] (174,21.2) -- (118,21.2);
+  \node[lbl,c] at (104,22) {C = MEDIA CAPACITY};
+  \node[lbl-b] at (2,29) {B. CROSS-DISC PARITY GROUP, N DATA DISCS + 1 PARITY DISC};
+  \foreach \y/\n/\e in {32/{SLOT 0 · BD:0001}/150, 37.4/{SLOT 1 · BD:0002}/138, 42.8/{SLOT 2 · BD:0003}/158, 51.4/{SLOT N−1}/144} {
+    \node[lbl-s] at (2,\y+2.9) {\n};
+    \path[vid] (34,\y) rectangle (\e,\y+3.6);
+    \path[gap] (\e,\y) rectangle (174,\y+3.6);
+  }
+  \xorop{30}{39.2}
+  \xorop{30}{44.6}
+  \xorop{30}{53.2}
+  \foreach \y in {47.6,48.8,50} \path[dot] (90,\y) circle[radius=0.28];
+  \path[w] (26,56.2) -- (174,56.2);
+  \path[w] (28.8,59.2) -- (31.2,59.2) (28.8,60.4) -- (31.2,60.4);
+  \node[lbl-s] at (2,60.7) {SLOT N · PARITY};
+  \path[grain] (34,58) rectangle (174,61.6);
+  \path[fill=white] (80,58.5) rectangle (128,61.1);
+  \node[lbl-s,c] at (104,60.6) {XOR OF SLOTS 0 ... N−1, EACH PADDED TO C};
+  \node[lbl-s] at (34,66.2) {REBUILD: ANY ONE LOST SLOT = XOR OF THE OTHER N, EACH PADDED TO C};
+  \path[vid] (34,69.6) rectangle (39,72.2);
+  \node[lbl-s] at (40.2,72) {DISC IMAGE BYTES};
+  \path[gap] (78,69.6) rectangle (83,72.2);
+  \node[lbl-s] at (84.2,72) {ZERO PADDING TO C};
+  \path[grain] (122,69.6) rectangle (127,72.2);
+  \node[lbl-s] at (128.2,72) {XOR RESULT};
+\end{nhfigure}
+
+\begin{nhbox}{VARIS DESIGN KEYS}
+One drive, one job: a burn and a retrieval never run at the same time.
+
+Nothing leaves staging until its disc has been written, read back, verified and cataloged.
+
+Every disc can identify itself: \nowrap{TOC.json} on the disc names its disk ID, media type, parity and group.
+
+The catalog is the map, the disc is the territory: search the catalog, then insert the disc it names.
+
+Every external tool runs through one interface, so every state transition can be tested without hardware.
+\end{nhbox}
+
+% ============================================================
+\nhchapter[CAT]{CATALOG DATA MODEL}
+
+\begin{nhpara}{4.1}{SCHEMA.}
+The catalog is five PostgreSQL tables (figure 4-1). The schema file is embedded in the binary and executed on every start. Every statement in it is idempotent (\nowrap{CREATE … IF NOT EXISTS}, \nowrap{ADD COLUMN IF NOT EXISTS}), so the same file creates a new catalog and migrates an old one. Appendix C lists every column.
+\end{nhpara}
+
+\begin{nhsubpara}{4.1.1}{Reading the Diagram.}
+Each table is drawn as a UML class with the stereotype «TABLE». Attributes read \nowrap{NAME : TYPE = DEFAULT}; «PK» marks the primary key, «FK» a foreign key, and [0..1] a nullable column. Indexes sit in a third compartment. Multiplicities on the associations follow the nullability of the foreign key, not the intended use.
+\end{nhsubpara}
+
+\begin{nhfigure}{92}{4-1}{Catalog Class Diagram}{CAT-501A}
+  \umltable{2}{2}{48}{4}{MEDIA\_TYPES}{{«PK» NAME : VARCHAR(30)},{CAPACITY\_BYTES : BIGINT},{ID\_PREFIX : TEXT = 'DISC'},{WRITE\_KIND : TEXT = 'OPTICAL'}}
+  \umltable{64}{2}{56}{9}{DISKS}{{«PK» ID : VARCHAR(50)},{«FK» MEDIA\_TYPE : VARCHAR(30) [0..1]},{PARITY\_PERCENT : SMALLINT},{«FK» GROUP\_ID : UUID [0..1]},{ROLE : VARCHAR(10) = 'DATA'},{SLOT\_INDEX : SMALLINT [0..1]},{ISO\_HASH : VARCHAR(256) [0..1]},{IS\_DRY\_RUN : BOOLEAN = FALSE},{CREATED\_AT : TIMESTAMP = NOW}}
+  \umltable{132}{2}{46}{4}{DISK\_GROUPS}{{«PK» ID : UUID = GEN\_RANDOM\_UUID()},{BURN\_JOB\_ID : UUID},{GROUP\_SIZE : INT},{CREATED\_AT : TIMESTAMP = NOW}}
+  \node[lbl-s,c] at (155,27.4) {\{MEMBERS ORDERED BY SLOT\_INDEX\}};
+  \path[w] (50,12) -- (64,12);
+  \node[lbl-s] at (51,11) {0..1};
+  \node[lbl-s,r] at (63,11) {0..*};
+  \path[w] (120,12) -- (132,12);
+  \node[lbl-s] at (121,11) {0..*};
+  \node[lbl-s,r] at (131,11) {0..1};
+  \path[w] (92,38.1) -- (92,48);
+  \node[lbl-s] at (93.4,41.8) {0..1};
+  \node[lbl-s] at (93.4,46.6) {0..*};
+  \path[box] (64,48) rectangle (120,88.6);
+  \node[lbl-s,c] at (92,51.4) {«TABLE»};
+  \node[lbl,c] at (92,55) {FILES};
+  \path[t] (64,56.4) -- (120,56.4);
+  \foreach \a [count=\i] in {{«PK» ID : UUID = GEN\_RANDOM\_UUID()},{«FK» DISK\_ID : VARCHAR(50) [0..1]},{ORIGINAL\_PATH : TEXT},{SIZE\_BYTES : BIGINT},{FILE\_HASH : VARCHAR(256) [0..1]},{TAGS : TEXT[] = '\{\}'},{DESCRIPTION : TEXT = '{}'},{ARCHIVED\_AT : TIMESTAMP = NOW}}
+    \node[lbl-s] at (66,{56.6+\i*2.9}) {\a};
+  \path[t] (64,81.4) -- (120,81.4);
+  \node[lbl-s] at (66,84.3) {«INDEX» GIN (ORIGINAL\_PATH GIN\_TRGM\_OPS)};
+  \node[lbl-s] at (66,87.2) {«INDEX» GIN (TAGS)};
+  \umltable{2}{52}{48}{4}{STAGED\_METADATA}{{«PK» PATH : TEXT},{TAGS : TEXT[] = '\{\}'},{DESCRIPTION : TEXT = '{}'},{UPDATED\_AT : TIMESTAMP = NOW}}
+  \node[lbl-s,c] at (26,77.6) {NO FK: KEYED BY STAGING PATH};
+  \path[dep] (50,62) -- (63.6,62);
+  \node[lbl-s,c] at (56.8,61) {«MOVES TO»};
+  \path[ev] (120,64) -- (132,64);
+  \path[box] (132,48) -- (174,48) -- (178,52) -- (178,76) -- (132,76) -- cycle;
+  \path[t] (174,48) -- (174,52) -- (178,52);
+  \foreach \l [count=\i] in {{SEARCHFILES(\$1):},{SELECT .{}.{}. FROM FILES F},{JOIN DISKS D ON D.ID = F.DISK\_ID},{WHERE PATH, DESCRIPTION OR},{TAGS ILIKE '\%' || \$1 || '\%'},{ORDER BY GREATEST(SIMILARITY())},{DESC LIMIT 50}}
+    \node[lbl-s] at (134.6,{50+\i*3.05}) {\l};
+\end{nhfigure}
+
+\begin{nhpara}{4.2}{IDENTITY AND INTEGRITY.}
+A disk ID is the media type's ID prefix, a colon and a four-digit sequence number, for example \nowrap{BD:0007}. The next number is the count of existing disks with that prefix plus the number already handed out in the current plan, plus one. This is safe only because one job runs at a time; there is no sequence object or unique lock behind it. The string enumerations \textit{role} (data, parity) and \textit{write\_kind} (optical, filesystem) carry no CHECK constraint; they are validated in Go where they are written. Disc and file rows are inserted without a transaction, one statement at a time.
+\end{nhpara}
+
+\begin{nhpara}{4.3}{SEARCH.}
+The Library page searches with one query (figure 4-1, note). It matches the search text as a case-insensitive substring of the path, the description, or the tags joined with spaces, and ranks rows by the greatest trigram similarity of the three. It returns at most 50 rows. Because the match is ILIKE with a leading wildcard over expressions, neither GIN index serves it; the query is a deliberate full scan, accepted at home-archive scale of tens of thousands of files.
+\end{nhpara}
+
+\begin{nhpara}{4.4}{METADATA LIFECYCLE.}
+Tags and a description can be attached to staged files before they are burned (figure 4-2). They are stored in \textit{staged\_metadata}, keyed by staging-relative path. When a file is cataloged, its row is deleted and returned in one statement, \nowrap{DELETE … RETURNING}, and the values are written into the new \textit{files} row. The staged file is then removed from the staging share.
+\end{nhpara}
+
+\begin{nhfigure}{64}{4-2}{Metadata Lifecycle Sequence Diagram}{CAT-502A}
+  \lifeline{15}{:BROWSER}{60}
+  \lifeline{53}{:WEB.SERVER}{60}
+  \lifeline{91}{:BURN.MANAGER}{60}
+  \lifeline{129}{STAGED\_METADATA}{60}
+  \lifeline{165}{FILES}{60}
+  \path[act] (51.8,13) rectangle (54.2,23);
+  \path[act] (127.8,17) rectangle (130.2,21.6);
+  \path[act] (51.8,30) rectangle (54.2,36);
+  \path[act] (89.8,33.4) rectangle (92.2,60);
+  \path[act] (127.8,46) rectangle (130.2,50.6);
+  \path[act] (163.8,53.4) rectangle (166.2,57);
+  \path[wa] (15,14) -- (51.4,14);
+  \node[lbl-s,c] at (33,12.8) {1: POST /STAGING/METADATA};
+  \path[wa] (54.2,18) -- (127.4,18);
+  \node[lbl-s,c] at (72,16.8) {2: UPSERT PER PATH};
+  \path[dep] (127.8,21.4) -- (54.6,21.4);
+  \path[dep] (51.8,22.6) -- (15.4,22.6);
+  \node[lbl-s,c] at (33,21.4) {FILE LIST FRAGMENT};
+  \path[wa] (15,31) -- (51.4,31);
+  \node[lbl-s,c] at (33,29.8) {3: POST /JOBS/CONTINUE};
+  \path[wa] (54.2,34.4) -- (89.4,34.4);
+  \node[lbl-s,c] at (72,33.2) {4: CONTINUENEXTDISC()};
+  \path[draw,line width=0.2mm] (85,38) rectangle (178,58.6);
+  \path[draw,fill=white,line width=0.2mm] (85,38) -- (96,38) -- (96,40.2) -- (94.4,41.6) -- (85,41.6) -- cycle;
+  \node[lbl-s] at (86.4,40.6) {LOOP};
+  \node[lbl-s] at (99,41.4) {[EACH FILE, AFTER VERIFY]};
+  \path[wa] (92.2,47) -- (127.4,47);
+  \node[lbl-s,c] at (110,45.8) {5: DELETE ... RETURNING};
+  \path[dep] (127.8,50.4) -- (92.6,50.4);
+  \node[lbl-s,c] at (110,49.2) {TAGS, DESCRIPTION};
+  \path[wa] (92.2,54.4) -- (163.4,54.4);
+  \node[lbl-s,c] at (147,53.2) {6: INSERT ROW};
+\end{nhfigure}
+
+\nhnotice{CAUTION}{Metadata is consumed before the file row is inserted. If the insert fails, that file's tags and description are lost and must be entered again; the file itself stays in staging and the disc can be retried.}
+
+% ============================================================
+\nhchapter[BRN]{BURN PIPELINE}
+
+\begin{nhpara}{5.1}{PLANNING.}
+Pressing BURN plans the whole job before any disc is written (figure 5-1). The planner first refuses the job if the spool directory has less than twice the media capacity free. It then walks the staging tree, sorts files by path, and fills discs in that order: a file that would push the current disc over its data budget (paragraph 3.3.1) starts a new disc. A single file larger than the budget gets a disc of its own. With cross-disc parity on, consecutive data discs are cut into groups of N, and each group, including a short last group, receives one parity disc.
+\end{nhpara}
+
+\begin{nhfigure}{46}{5-1}{Burn Planning Process Flow}{BRN-501A}
+  \node[lbl-s] at (2,4) {INPUTS};
+  \node[lbl-s,r] at (50,10.6) {STAGING TREE};
+  \node[lbl-s,r] at (50,13.4) {/DATA/STAGING};
+  \path[wa] (51.2,12) -- (55.6,12);
+  \node[lbl-s,r] at (50,20.6) {MEDIA TYPE: C,};
+  \node[lbl-s,r] at (50,23.4) {ID\_PREFIX, WRITE\_KIND};
+  \path[wa] (51.2,22) -- (55.6,22);
+  \node[lbl-s,r] at (50,30.6) {PARITY \% P (5–50),};
+  \node[lbl-s,r] at (50,33.4) {COMPRESS, DRY RUN};
+  \path[wa] (51.2,32) -- (55.6,32);
+  \node[lbl-s,r] at (50,40.6) {GROUP SIZE N};
+  \node[lbl-s,r] at (50,43.4) {(DEFAULT 10)};
+  \path[wa] (51.2,42) -- (55.6,42);
+  \path[box] (56,2) rectangle (124,44);
+  \node[lbl-b,c] at (90,7) {ACTIVITIES};
+  \path[t] (56,9.4) -- (124,9.4);
+  \foreach \y/\a in {14.4/{CHECK SPOOL FREE ≥ 2 × C},19.6/{SCAN STAGING, SORT BY PATH},24.8/{BUDGET = C × 100 / (100 + P)},30/{GREEDY PACK IN PATH ORDER},35.2/{ALLOCATE PREFIX:NNNN PER DISC},40.4/{GROUP N DATA + 1 PARITY DISC}}
+    \node[lbl-s] at (60,\y) {\a};
+  \node[lbl-s,r] at (178,4) {OUTPUTS};
+  \path[wa] (124,13.4) -- (132.6,13.4);
+  \node[lbl-s] at (134,12) {DISCPLAN LIST};
+  \node[lbl-s] at (134,14.8) {(ROLE, GROUP, SLOT)};
+  \path[wa] (124,25.4) -- (132.6,25.4);
+  \node[lbl-s] at (134,24) {DISK\_GROUPS ROWS};
+  \node[lbl-s] at (134,26.8) {(ONE PER GROUP)};
+  \path[wa] (124,37.4) -- (132.6,37.4);
+  \node[lbl-s] at (134,36) {JOB IN STATE};
+  \node[lbl-s] at (134,38.8) {AWAITING\_DISC};
+\end{nhfigure}
+
+\begin{nhpara}{5.2}{STATES.}
+The burn job is an in-memory state machine guarded by one mutex (figure 5-2). The job waits in AWAITING\_DISC until the operator inserts a blank and presses continue. One disc plan then runs through PACKING, PARITY, ISO, BURNING and VERIFYING. A dry run copies the ISO to the dryrun share and skips VERIFYING. After the disc is cataloged the job returns to AWAITING\_DISC for the next plan, or ends in DONE. Any error moves the job to FAILED with the error shown; retry returns it to AWAITING\_DISC for the same plan without planning again.
+\end{nhpara}
+
+\begin{nhfigure}{83}{5-2}{Burn Job State Diagram}{BRN-502A}
+  \path[dot] (24,14) circle[radius=1.1];
+  \path[wa] (24,15.1) -- (24,23.6);
+  \node[lbl-s] at (26,20.2) {POST /BURN / PLAN};
+  \umlstate{6}{24}{36}{AWAITING\_DISC}{}
+  \path[panel] (50,2) rectangle (178.5,52);
+  \node[lbl-s] at (52,5.6) {RUNDISC (ONE DISCPLAN)};
+  \path[wa] (42,28) -- (46,28) -- (46,15) -- (55.6,15);
+  \node[lbl-s,up] at (45.2,26.6) {CONTINUE};
+  \umlstate{56}{8}{34}{PACKING}{DO / WRITETAR}
+  \umlstate{100}{8}{34}{PARITY}{DO / PAR2CREATE, TOC}
+  \umlstate{144}{8}{32}{ISO}{DO / XORRISO, SHA-256}
+  \path[wa] (90,12) -- (99.6,12);
+  \path[wa] (134,12) -- (143.6,12);
+  \path[wa] (160,22) -- (160,31.6);
+  \umlstate{144}{32}{32}{BURNING}{DO / WODIM OR COPY}
+  \umlstate{100}{32}{34}{VERIFYING}{DO / READ-BACK, PAR2VERIFY}
+  \path[wa] (144,36) -- (134.4,36);
+  \path[w] (117,46) -- (117,56);
+  \path[w] (152,46) -- (152,56) -- (117,56);
+  \node[lbl-s] at (153.6,49.6) {[DRY RUN]};
+  \path[dot] (117,56) circle[radius=0.55];
+  \path[wa] (117,56) -- (27.4,56);
+  \node[lbl-s,c] at (72,55) {COMPLETE / COMMITDISC};
+  \path[box] (24,53) -- (27,56) -- (24,59) -- (21,56) -- cycle;
+  \path[wa] (24,53) -- (24,38.4);
+  \node[lbl-s] at (25.6,47.4) {[MORE PLANS]};
+  \path[wa] (24,59) -- (24,65.6);
+  \node[lbl-s] at (25.6,63.6) {[LAST]};
+  \path[state] (6,66) rectangle (42,76);
+  \node[lbl,c] at (24,72) {DONE};
+  \path[wa] (42,71) -- (48.6,71);
+  \path[draw,line width=0.3mm] (50.4,71) circle[radius=1.6];
+  \path[dot] (50.4,71) circle[radius=0.9];
+  \path[wa] (168,52) -- (168,61.6);
+  \node[lbl-s,r] at (166.4,59.4) {ANY STEP ERROR};
+  \path[state] (140,62) rectangle (176,76);
+  \node[lbl,c] at (158,70.4) {FAILED};
+  \path[wa] (158,76) -- (158,80) -- (2,80) -- (2,31) -- (5.6,31);
+  \node[lbl-s,c] at (90,79) {POST /JOBS/RETRY};
+\end{nhfigure}
+
+\begin{nhpara}{5.3}{DISC SEQUENCE.}
+Figure 5-3 shows one data disc on the optical write kind. The tar is written to the spool, par2 is created beside it, and the table of contents (TOC) is written. The three files are moved into a source folder and xorriso builds an ISO 9660 image with Rock Ridge and Joliet names. The image is hashed with SHA-256 before it is written. After wodim writes it, the device is read back and hashed; a mismatch fails the disc. par2verify then checks the payload. Only after both checks does the disc row go into the catalog, followed by one file row per file.
+\end{nhpara}
+
+\begin{nhfigure}{72}{5-3}{Data Disc Burn Sequence Diagram}{BRN-503A}
+  \lifeline{18}{:BURN.MANAGER}{68}
+  \lifeline{56}{:SPOOL DIR}{68}
+  \lifeline{92}{:EXECX}{68}
+  \lifeline{128}{:TARGET}{68}
+  \lifeline{165}{:CATALOG}{68}
+  \path[act] (16.8,12) rectangle (19.2,68);
+  \path[act] (90.8,38) rectangle (93.2,43);
+  \path[wa] (19.2,14) -- (55.6,14);
+  \node[lbl-s,c] at (37,12.8) {1: WRITETAR};
+  \path[wa] (19.2,19) -- (91.6,19);
+  \node[lbl-s,c] at (74,17.8) {2: PAR2CREATE -RP};
+  \path[wa] (19.2,24) -- (55.6,24);
+  \node[lbl-s,c] at (37,22.8) {3: TOC.JSON};
+  \path[wa] (19.2,29) -- (91.6,29);
+  \node[lbl-s,c] at (74,27.8) {4: XORRISO MKISOFS};
+  \path[wa] (19.2,34) -- (55.6,34);
+  \node[lbl-s,c] at (37,32.8) {5: SHA-256(ISO)};
+  \path[wa] (19.2,39) -- (90.4,39);
+  \node[lbl-s,c] at (74,37.8) {6: WODIM DEV=...};
+  \path[wa] (93.2,42) -- (127.6,42);
+  \node[lbl-s,c] at (110,40.8) {WRITE};
+  \path[wa] (19.2,47) -- (127.6,47);
+  \node[lbl-s,c] at (110,45.8) {7: READ BACK};
+  \path[wa] (19.2,52) -- (91.6,52);
+  \node[lbl-s,c] at (74,50.8) {8: PAR2VERIFY};
+  \path[wa] (19.2,58) -- (164.6,58);
+  \node[lbl-s,c] at (147,56.8) {9: INSERTDISK};
+  \path[wa] (19.2,64) -- (164.6,64);
+  \node[lbl-s,c] at (147,62.8) {10: INSERTFILE ×N};
+\end{nhfigure}
+
+\begin{nhpara}{5.4}{WRITE KINDS.}
+How the image reaches the medium depends on the media type's write kind and the dry-run flag (table 5-1). The target path is typed into the dashboard for each burn and defaults to \nowrap{/dev/sr0}.
+\end{nhpara}
+
+\begin{nhgrid}{5-1}{Write Kinds}{|l|X|X|}{\multicolumn{1}{|c|}{Mode}&\multicolumn{1}{c|}{Write}&\multicolumn{1}{c|}{Verify}}
+  optical&wodim \nowrap{dev=<target>} \nowrap{<iso>}&SHA-256 of the device equals the ISO hash; par2verify\\\hline
+  filesystem&Copy the ISO to the target path (RDX cartridge, USB drive)&As optical, then write \nowrap{<target>.sha256} in sha256sum format\\\hline
+  dry run&Copy the ISO to \nowrap{/data/dryrun/<id>.iso}; the disc row is flagged \textit{is\_dry\_run}&None\\\hline
+\end{nhgrid}
+
+\begin{nhpara}{5.5}{CROSS-DISC PARITY.}
+A parity disc is built after the data discs of its group, in the same job. Its payload is the XOR of the group's data disc images, each read from the spool and zero-padded to the media capacity C (figure 3-2). The payload is then given its own par2 set and TOC, wrapped in its own ISO, and written and verified like a data disc. Once the parity disc is cataloged, the group's data images are deleted from the spool. Padding to C rather than to the largest image is decision D-2.
+\end{nhpara}
+
+\begin{nhtable}{5-2}{Burn Data}
+  \nhrow{Parity percentage P, accepted}{5 to 50, default 10}
+  \nhrow{BD-R capacity C}{25,025,314,816 bytes}
+  \nhrow{BD-R DL capacity C}{50,050,629,632 bytes}
+  \nhrow{BD-R data budget at P = 10}{22,750,286,196 bytes}
+  \nhrow{Spool free space required}{2 × C, checked per disc}
+  \nhrow{Group size N}{default 10; values ≤ 1 become 10}
+  \nhrow{Disk ID format}{PREFIX:NNNN, e.g. BD:0007}
+  \nhrow{Jobs page poll interval}{2 s}
+\end{nhtable}
+
+% ============================================================
+\nhchapter[RET]{RETRIEVAL}
+
+\begin{nhpara}{6.1}{STATES.}
+A retrieval is a second in-memory state machine with its own mutex (figure 6-1). Pressing GET in the Library opens a job in AWAITING\_MEDIA that names the disc to insert. READ DISK reads it. The result is one of three: DONE, FAILED, or NEEDS\_RECONSTRUCTION. Two short-lived states, STARTING\_RECONSTRUCTION and READING\_RECONSTRUCTION\_DISC, exist only to claim the job while a request is working, so that two concurrent requests cannot both act on it.
+\end{nhpara}
+
+\begin{nhfigure}{81}{6-1}{Retrieval Job State Diagram}{RET-501A}
+  \path[dot] (28,3) circle[radius=1.1];
+  \path[wa] (28,4.1) -- (28,7.6);
+  \node[lbl-s] at (30,6.4) {POST /RETRIEVE};
+  \umlstate{6}{8}{44}{AWAITING\_MEDIA}{}
+  \umlstate{68}{8}{36}{READING\_DISC}{}
+  \umlstate{136}{8}{36}{DONE}{}
+  \umlstate{68}{34}{36}{NEEDS\_RECONSTRUCTION}{}
+  \umlstate{132}{34}{28}{FAILED}{}
+  \umlstate{4}{62}{44}{STARTING\_RECONSTRUCTION}{}
+  \umlstate{66}{62}{36}{RECONSTRUCTING}{}
+  \umlstate{124}{62}{52}{READING\_RECONSTRUCTION\_DISC}{}
+  \path[wa] (50,14) -- (67.6,14);
+  \node[lbl-s,c] at (59,13) {READ DISK};
+  \path[wa] (104,12) -- (135.6,12);
+  \node[lbl-s,c] at (120,11) {[TOC, PAR2 OK] / EXTRACT};
+  \path[w] (104,17) -- (120,17) -- (120,40);
+  \path[wa] (120,40) -- (131.6,40);
+  \node[lbl-s,up] at (119.2,37.6) {[WRONG DISC]};
+  \path[wa] (86,22) -- (86,33.6);
+  \node[lbl-s] at (87.6,28.6) {[READ OR PAR2 FAILS]};
+  \path[w] (68,40) -- (26,40);
+  \path[wa] (26,40) -- (26,61.6);
+  \node[lbl-s,c] at (47,39) {RECONSTRUCT FROM GROUP};
+  \path[wa] (48,68) -- (65.6,68);
+  \node[lbl-s,c] at (57,67) {[OK]};
+  \path[w] (38,62) -- (38,44.4);
+  \path[wa] (38,44.4) -- (67.6,44.4);
+  \node[lbl-s,c] at (53,43.4) {[ERROR]};
+  \path[wa] (102,66) -- (123.6,66);
+  \node[lbl-s,c] at (113,65) {READ MEMBER};
+  \path[wa] (124,71) -- (102.4,71);
+  \node[lbl-s,c] at (113,75.6) {[MORE | ERROR]};
+  \path[wa] (150,62) -- (150,56.4);
+  \node[lbl-s,r] at (148.4,60.4) {[LAST] / XOR, READ IMAGE};
+  \path[box] (150,50) -- (153,53) -- (150,56) -- (147,53) -- cycle;
+  \path[wa] (150,50) -- (150,48.4);
+  \path[w] (153,53) -- (168,53);
+  \path[wa] (168,53) -- (168,22.4);
+  \node[lbl-s,up] at (167.2,46) {[EXTRACTED]};
+  \path[w] (147,53) -- (96,53);
+  \path[wa] (96,53) -- (96,48.4);
+  \node[lbl-s,c] at (122,52) {[MEDIA FAULT]};
+\end{nhfigure}
+
+\begin{nhpara}{6.2}{READING A DISC.}
+A disc is read through xorriso, which accepts a device and an ISO file alike (figure 6-2). The manager extracts the TOC first and compares its disk ID with the one the catalog named. It then extracts the tar and its par2 index, runs par2verify, and extracts the one requested member of the tar into \nowrap{/data/retrieved}, under the file's base name. A dry-run disc is read from \nowrap{/data/dryrun/<id>.iso}; the target path is ignored.
+\end{nhpara}
+
+\begin{nhfigure}{54}{6-2}{Disc Read Sequence Diagram}{RET-502A}
+  \lifeline{16}{:LIBRARY PAGE}{50}
+  \lifeline{56}{:RETRIEVE.MGR}{50}
+  \lifeline{98}{:XORRISO}{50}
+  \lifeline{132}{:PAR2}{50}
+  \lifeline{166}{:RETRIEVED}{50}
+  \path[act] (54.8,13) rectangle (57.2,50);
+  \path[wa] (16,14) -- (54.4,14);
+  \node[lbl-s,c] at (34,12.8) {1: READ DISK};
+  \path[wa] (57.2,19) -- (97.6,19);
+  \node[lbl-s,c] at (77,17.8) {2: EXTRACT TOC.JSON};
+  \path[w] (57.2,23) -- (62,23) -- (62,26.4);
+  \path[wa] (62,26.4) -- (57.6,26.4);
+  \node[lbl-s] at (63.4,26) {3: DISK\_ID MATCHES};
+  \path[wa] (57.2,32) -- (97.6,32);
+  \node[lbl-s,c] at (77,30.8) {4: TAR, TAR.PAR2};
+  \path[wa] (57.2,38) -- (131.6,38);
+  \node[lbl-s,c] at (77,36.8) {5: PAR2VERIFY};
+  \path[wa] (57.2,44) -- (165.6,44);
+  \node[lbl-s,c] at (149,42.8) {6: EXTRACTFILE};
+  \path[dep] (54.8,49) -- (16.4,49);
+  \node[lbl-s,c] at (34,47.8) {STATE DONE};
+\end{nhfigure}
+
+\begin{nhpara}{6.3}{FAILURE CLASSIFICATION.}
+Every failure is sorted by what can fix it (table 6-1). A fault that may be damaged media leads to NEEDS\_RECONSTRUCTION, because a group parity disc can repair it. A fault that reconstruction cannot repair leads to FAILED.
+\end{nhpara}
+
+\begin{nhgrid}{6-1}{Retrieval Failure Classification}{|X|l|X|}{\multicolumn{1}{|c|}{Fault}&\multicolumn{1}{c|}{Next State}&\multicolumn{1}{c|}{Reason}}
+  TOC, tar or par2 index cannot be extracted; TOC does not parse&NEEDS\_RECONSTRUCTION&The media may be damaged.\\\hline
+  par2verify fails&NEEDS\_RECONSTRUCTION&The payload is damaged beyond what the disc can repair.\\\hline
+  TOC names a different disk ID&FAILED&The wrong disc is in the drive; insert the right one.\\\hline
+  Member not found in a verified tar&FAILED&The tar is proven intact, so the file is not on this disc.\\\hline
+  Catalog lookup fails&FAILED&No read was attempted.\\\hline
+\end{nhgrid}
+
+\begin{nhpara}{6.4}{RECONSTRUCTION.}
+If the disc belongs to a group, RECONSTRUCT FROM GROUP lists every other member of the group, data and parity, by disk ID. The operator inserts them in any order and presses READ for each. A data member is read raw from the device, exactly C bytes. The parity member is not read raw: its payload is extracted from inside its own ISO, because the raw parity disc is a wrapper around the XOR result, not the result itself. When the last member is supplied, the members are XORed into the missing disc's image, which is then read through the same path as a physical disc (paragraph 6.2). A failed member read leaves the job in RECONSTRUCTING with its progress kept.
+\end{nhpara}
+
+\nhnotice{CAUTION}{Reconstruction repairs one lost disc per group. If two discs of the same group are lost, the files on both are unrecoverable.}
+
+% ============================================================
+\nhchapter[DES]{DESIGN SOLUTION}
+
+\begin{nhpara}{7.1}{REQUIREMENTS.}
+The requirements below are the ones the code enforces today (table 7-1). Each is stated so that it can be verified: T by test, A by analysis, I by inspection.
+\end{nhpara}
+
+\begin{nhgrid}{7-1}{Varis Requirements}{|l|X|X|c|}{ID&\multicolumn{1}{c|}{Requirement}&\multicolumn{1}{c|}{Rationale}&Verif.}
+  R-1&The system shall place at most \nowrap{C × 100 / (100 + P)} bytes of files on one data disc, unless one file alone exceeds that.&Data plus par2 must fit the medium.&T\\\hline
+  R-2&The system shall accept a parity percentage only as an integer from 5 to 50.&Below 5 \% the repair data is too thin; above 50 \% half the disc is parity.&T\\\hline
+  R-3&The system shall run at most one burn or retrieval job at a time.&There is one drive.&T\\\hline
+  R-4&The system shall refuse a burn disc when the spool has less than 2 × C bytes free.&The tar, par2 set and ISO coexist in the spool.&T\\\hline
+  R-5&The system shall catalog a disc only after its read-back SHA-256 equals the ISO's and par2verify passes.&A disc that reads back wrong is not an archive.&T\\\hline
+  R-6&The system shall remove a file from staging only after its file row is inserted.&A failed burn must lose nothing.&T\\\hline
+  R-7&The system shall rebuild any one missing disc of a group from the other members of that group.&Total loss of one disc must not lose data.&T\\\hline
+  R-8&A search shall return at most 50 rows.&The Library page lists results on one page.&I\\\hline
+  R-9&Disk IDs shall be PREFIX:NNNN, sequential per prefix.&The ID is written on the disc cover and searched by hand.&T\\\hline
+\end{nhgrid}
+
+\begin{nhpara}{7.2}{DECISION ANALYSIS.}
+The choices a newcomer is most likely to question are recorded below as decisions D-1 to D-5. The options and reasons come from the design specs and from comments in the code; where a reason is not recorded, the record says so. The scores in the trade matrices are this handbook's assessment against the criteria those sources name, on a scale of 1 to 3.
+\end{nhpara}
+
+\begin{nhdecision}{D-1}{ONE BINARY FOR WEB, WEBDAV AND WORKER}{Accepted, 16 Sep 2026}
+  \nhfield{CONTEXT}{The web UI, the WebDAV server and the burn and retrieval workers all act on one drive and one job (requirement R-3). Design spec §2.}
+  \nhfield{OPTIONS}{One process; a web service and a worker service joined by a job queue; separate services sharing state through the catalog (table 7-2).}
+  \begin{nhgrid}{7-2}{D-1 Trade Matrix}{|X|c|c|c|}{\multicolumn{1}{|c|}{Criterion (Weight)}&One process&Queue&Shared DB}
+    Fits a single drive and job (0.5)&3&2&2\\\hline
+    Fewest moving parts (0.3)&3&1&2\\\hline
+    Survives a process restart (0.2)&1&3&3\\\hline
+    Weighted score&2.6&1.9&2.2\\\hline
+  \end{nhgrid}
+  \nhfield{DECISION}{Serve everything from one Go binary, \textit{archive-core}.}
+  \nhfield{RATIONALE}{The parts share one in-process state machine and one drive, so splitting them buys nothing (spec §2).}
+  \nhfield{CONSEQUENCES}{Job state lives in memory: a restart forgets an in-flight job, though staged files and the catalog survive. A second drive would reopen the decision.}
+\end{nhdecision}
+
+\begin{nhdecision}{D-2}{PAD PARITY OPERANDS TO MEDIA CAPACITY}{Accepted, 17 Sep 2026}
+  \nhfield{CONTEXT}{XOR needs operands of equal length. At reconstruction time the missing disc's real size is the one thing not known (requirement R-7). Comment on \textit{buildParityPayload}.}
+  \nhfield{OPTIONS}{Pad every image to the media capacity C; pad to the largest image in the group and record that length (table 7-3).}
+  \begin{nhgrid}{7-3}{D-2 Trade Matrix}{|X|c|c|}{\multicolumn{1}{|c|}{Criterion (Weight)}&Pad to C&Pad to largest}
+    Correct whichever disc is lost (0.6)&3&2\\\hline
+    No extra state to record (0.3)&3&1\\\hline
+    Smallest parity payload (0.1)&1&3\\\hline
+    Weighted score&2.8&1.8\\\hline
+  \end{nhgrid}
+  \nhfield{DECISION}{Pad every operand to the fixed, known media capacity C.}
+  \nhfield{RATIONALE}{C is the only length both the burn side and the rebuild side know without the missing disc.}
+  \nhfield{CONSEQUENCES}{The parity payload is always C bytes, mostly zeros, and the whole group is held in memory while it is computed (see 7.3, F-2 and F-3).}
+\end{nhdecision}
+
+\begin{nhdecision}{D-3}{IN-MEMORY JOB UNDER ONE MUTEX}{Accepted, 16 Sep 2026}
+  \nhfield{CONTEXT}{Only one job may run (requirement R-3). Design spec §7.}
+  \nhfield{OPTIONS}{An in-memory state machine guarded by a mutex; a job queue library (table 7-4).}
+  \begin{nhgrid}{7-4}{D-3 Trade Matrix}{|X|c|c|}{\multicolumn{1}{|c|}{Criterion (Weight)}&Mutex&Queue library}
+    Matches one drive (0.5)&3&2\\\hline
+    No new dependency (0.3)&3&1\\\hline
+    Durable job state (0.2)&1&3\\\hline
+    Weighted score&2.6&1.9\\\hline
+  \end{nhgrid}
+  \nhfield{DECISION}{Each manager keeps its job in memory behind a \textit{sync.Mutex}; a state is claimed in the same critical section that checks it.}
+  \nhfield{RATIONALE}{One drive allows one job; a queue would have nothing to queue (spec §7).}
+  \nhfield{CONSEQUENCES}{Two managers mean two locks; the web layer checks one from the other (see 7.3, F-6).}
+\end{nhdecision}
+
+\begin{nhdecision}{D-4}{STANDARD LIBRARY HTTP ROUTING}{Accepted, 16 Sep 2026}
+  \nhfield{CONTEXT}{About ten routes, each a method and a path. Design spec §2.}
+  \nhfield{OPTIONS}{\textit{net/http} with Go 1.22 method and wildcard patterns; chi; gorilla/mux (table 7-5).}
+  \begin{nhgrid}{7-5}{D-4 Trade Matrix}{|X|c|c|c|}{\multicolumn{1}{|c|}{Criterion (Weight)}&net/http&chi&gorilla}
+    No dependency (0.6)&3&1&1\\\hline
+    Covers the routes needed (0.4)&3&3&3\\\hline
+    Weighted score&3.0&1.8&1.8\\\hline
+  \end{nhgrid}
+  \nhfield{DECISION}{Route with \textit{http.ServeMux} patterns such as \nowrap{"POST /burn"}.}
+  \nhfield{RATIONALE}{The route count does not justify a router dependency (spec §2).}
+  \nhfield{CONSEQUENCES}{Middleware such as authentication would be written by hand.}
+\end{nhdecision}
+
+\begin{nhdecision}{D-5}{WODIM FOR OPTICAL WRITES}{Accepted, 16 Sep 2026}
+  \nhfield{CONTEXT}{The image must be written to BD-R media from inside a Debian container. Design spec §2.}
+  \nhfield{OPTIONS}{wodim; growisofs. The spec names no criteria beyond maintenance, so no trade matrix is given.}
+  \nhfield{DECISION}{Write images with \nowrap{wodim dev=<target> <iso>}.}
+  \nhfield{RATIONALE}{The spec records wodim as the more actively maintained successor of cdrtools.}
+  \nhfield{CONSEQUENCES}{Burning depends on wodim's Blu-ray support on the host's drive; this is verified by hand on the Linux host, not in CI.}
+\end{nhdecision}
+
+\begin{nhpara}{7.3}{OPEN FINDINGS.}
+Writing this handbook required reading every code path against its documents. The findings in table 7-6 were confirmed in the code at commit 2c60c60. None of them affects a dry run; F-1 to F-3 affect real optical media.
+\end{nhpara}
+
+\begin{nhgrid}{7-6}{Open Findings}{|l|X|X|}{ID&\multicolumn{1}{c|}{Finding}&\multicolumn{1}{c|}{Effect}}
+  F-1&par2create writes an index \nowrap{<id>.tar.par2} and recovery volumes \nowrap{<id>.tar.vol…par2}. Only the index is moved into the ISO source folder; the volumes stay in the spool and are not removed on retry.&The disc can detect damage but holds no recovery blocks to repair it. A retry may meet leftover volumes.\\\hline
+  F-2&The parity payload is exactly C bytes before par2, TOC and ISO overhead are added.&A parity disc image is larger than the medium it is meant for; an optical write of it cannot succeed.\\\hline
+  F-3&Parity build and reconstruction read whole images into memory.&Up to (N + 1) × C bytes of memory: about 275 GB for a group of 10 BD-R.\\\hline
+  F-4&OPTICAL\_DEVICE is loaded but never read.&The target is the form field, default \nowrap{/dev/sr0}.\\\hline
+  F-5&Compose does not mount \nowrap{/data/dryrun}. README omits DRYRUN\_DIR and the \nowrap{/dryruns} routes and lists a PLANNING state the code does not have.&Dry-run images live in the container layer and are lost with it.\\\hline
+  F-6&The burn and retrieval managers check each other without a shared lock.&Two requests arriving together can start both jobs.\\\hline
+\end{nhgrid}
+
+% ============================================================
+\nhchapter[OPS]{OPERATIONS}
+
+\begin{nhpara}{8.1}{DEPLOYMENT.}
+Start the stack with \nowrap{docker compose up -{}-build -d} on a Linux host with the drive at \nowrap{/dev/sr0}. Remove the comment marks from the \textit{devices} block in \nowrap{docker-compose.yml} before a real burn. Settings come from environment variables (table 8-1). The schema is applied and the two Blu-ray media types are seeded on every start. \nowrap{GET /healthz} returns ``ok''.
+\end{nhpara}
+
+\begin{nhgrid}{8-1}{Environment Variables}{|l|X|}{\multicolumn{1}{|c|}{Variable}&\multicolumn{1}{c|}{Default}}
+  DATABASE\_URL&postgres://varis:varis@archive-db:5432/varis?sslmode=disable\\\hline
+  STAGING\_DIR&/data/staging\\\hline
+  SPOOL\_DIR&/data/spool\\\hline
+  RETRIEVED\_DIR&/data/retrieved\\\hline
+  DRYRUN\_DIR&/data/dryrun\\\hline
+  HTTP\_ADDR&:8080\\\hline
+  OPTICAL\_DEVICE&/dev/sr0 (not used, finding F-4)\\\hline
+\end{nhgrid}
+
+\begin{nhpara}{8.2}{MOUNTING THE SHARES.}
+Mount one WebDAV root, \nowrap{http://<host>:8080/webdav/}. It holds three folders: \textit{staging} (drop files here to archive them), \textit{retrieved} (restored files appear here) and \textit{dryrun} (dry-run images). The root itself is read-only; the three folders cannot be renamed or removed. On macOS use Finder, Go, Connect to Server.
+\end{nhpara}
+
+\begin{nhpara}{8.3}{BURNING.}
+Burn discs with the checklist below. Tagging is optional and only affects search. The job page asks for a blank disc before each disc of the plan.
+\end{nhpara}
+
+\nhnotice{CAUTION}{Do not move or rename files in the staging share while a burn job exists. The plan holds paths, not copies; a missing file fails the disc at PACKING or when the file row is written.}
+
+\begin{nhchecklist}{BURN DISCS}{OPERATOR}
+  \nhstep{1}{STAGING - copy files in}
+  \nhstep{2}{APPLY TO SELECTED - tags (opt)}
+  \nhstep{3}{MEDIA TYPE - select}
+  \nhstep{4}{PARITY \% - set 5 to 50}
+  \nhstep{5}{BURN - press}
+  \nhverify{STATE - AWAITING\_DISC}
+  \nhstep{6}{BLANK DISC - insert}
+  \nhstep{7}{CONTINUE - press, rpt per disc}
+  \nhverify{STATE - DONE}
+  \nhstep{8}{PRINTABLE COVER - print}
+\end{nhchecklist}
+
+\begin{nhpara}{8.4}{RETRIEVING.}
+Retrieve a file with the first checklist. If the state becomes NEEDS\_RECONSTRUCTION and the disc is in a group, continue with the second.
+\end{nhpara}
+
+\begin{nhchecklist}{RETRIEVE FILE}{OPERATOR}
+  \nhstep{1}{LIBRARY - search file}
+  \nhstep{2}{GET - press}
+  \nhverify{STATE - AWAITING\_MEDIA}
+  \nhstep{3}{DISC <ID> - insert}
+  \nhstep{4}{READ DISK - press}
+  \nhverify{STATE - DONE}
+  \nhstep{5}{RETRIEVED - copy file out}
+\end{nhchecklist}
+
+\begin{nhchecklist}{RECONSTRUCT DISC}{OPERATOR}
+  \nhstep{1}{RECONSTRUCT FROM GROUP - press}
+  \nhverify{STATE - RECONSTRUCTING}
+  \nhstep{2}{NEXT LISTED DISC - insert}
+  \nhstep{3}{READ - press}
+  \nhstep{4}{STEPS 2-3 - rpt per member}
+  \nhverify{STATE - DONE}
+\end{nhchecklist}
+
+\begin{nhpara}{8.5}{VERIFICATION.}
+Every push and pull request runs the checks in figure 8-1. Unit tests use the fake executor and in-memory catalogs, so the state machines are tested for their transitions without a drive. Catalog tests need PostgreSQL and skip when DATABASE\_URL is unset; CI provides PostgreSQL 16 as a service. Real burns and reads are verified by hand on the Linux host.
+\end{nhpara}
+
+\begin{nhfigure}{40}{8-1}{Continuous Integration Process Flow}{OPS-501A}
+  \node[lbl-s] at (2,4) {INPUTS};
+  \node[lbl-s,r] at (50,12) {PULL REQUEST};
+  \node[lbl-s,r] at (50,14.8) {TO MASTER};
+  \path[wa] (51.2,13.4) -- (55.6,13.4);
+  \node[lbl-s,r] at (50,22) {PUSH TO MASTER};
+  \path[wa] (51.2,21.4) -- (55.6,21.4);
+  \node[lbl-s,r] at (50,30) {PUSH OF TAG V*};
+  \path[wa] (51.2,29.4) -- (55.6,29.4);
+  \path[box] (56,2) rectangle (124,38);
+  \node[lbl-b,c] at (90,7) {ACTIVITIES};
+  \path[t] (56,9.4) -- (124,9.4);
+  \foreach \y/\a in {14.4/{GOFMT -L, FAIL ON ANY OUTPUT},19.6/{GO VET ./.{}.{}.},24.8/{GO BUILD ./.{}.{}.},30/{GO TEST ./.{}.{}. -RACE},35.2/{POSTGRES 16 SERVICE FOR DB TESTS}}
+    \node[lbl-s] at (60,\y) {\a};
+  \node[lbl-s,r] at (178,4) {OUTPUTS};
+  \path[wa] (124,13.4) -- (132.6,13.4);
+  \node[lbl-s] at (134,12) {PASS OR FAIL ONLY};
+  \node[lbl-s] at (134,14.8) {(PULL REQUEST)};
+  \path[wa] (124,22) -- (132.6,22);
+  \node[lbl-s] at (134,22.6) {GHCR.IO IMAGE :LATEST};
+  \path[wa] (124,30) -- (132.6,30);
+  \node[lbl-s] at (134,29.4) {IMAGE :X.Y.Z, :X.Y, :X};
+  \node[lbl-s] at (134,32.2) {(SEMVER TAG)};
+\end{nhfigure}
+
+\begin{nhtable}{8-2}{Operating Limits}
+  \nhrow{Concurrent jobs, burn or retrieval}{1}
+  \nhrow{Drives}{1 per job, path per request}
+  \nhrow{Discs lost per group, recoverable}{1}
+  \nhrow{Search results per query}{50}
+  \nhrow{Library search keystroke delay}{300 ms}
+  \nhrow{Users}{1, no authentication}
+\end{nhtable}
+
+% ============================================================
+\nhappendix
+\nhchapter[A]{ABBREVIATIONS AND ACRONYMS}
+
+\begin{nhgrid}{A-1}{Abbreviations and Acronyms}{|l|X|}{\multicolumn{1}{|c|}{Term}&\multicolumn{1}{c|}{Meaning}}
+  BD-R&Blu-ray Disc Recordable, 25 GB single layer\\\hline
+  BD-R DL&Blu-ray Disc Recordable, dual layer, 50 GB\\\hline
+  C&Media capacity in bytes, from \textit{media\_types.capacity\_bytes}\\\hline
+  CI&Continuous integration\\\hline
+  DDL&Data definition language\\\hline
+  FK&Foreign key\\\hline
+  GIN&Generalized inverted index (PostgreSQL)\\\hline
+  HTMX&A JavaScript library that swaps HTML fragments from server responses\\\hline
+  ISO&ISO 9660 disc image\\\hline
+  N&Number of data discs in a cross-disc parity group\\\hline
+  P&Parity percentage of one burn\\\hline
+  par2&Parity Volume Set 2.0, Reed–Solomon repair data for files\\\hline
+  PK&Primary key\\\hline
+  RDX&Removable disk cartridge system\\\hline
+  SHA-256&Secure Hash Algorithm, 256-bit digest\\\hline
+  TOC&Table of contents, the \nowrap{TOC.json} disc header\\\hline
+  UI&User interface\\\hline
+  UML&Unified Modeling Language\\\hline
+  WebDAV&Web Distributed Authoring and Versioning\\\hline
+  XOR&Exclusive or\\\hline
+\end{nhgrid}
+
+\nhchapter[B]{GLOSSARY}
+
+\begin{nhgrid}{B-1}{Glossary}{|l|X|}{\multicolumn{1}{|c|}{Term}&\multicolumn{1}{c|}{Definition}}
+  Bucket&The set of staged files planned for one data disc.\\\hline
+  Data disc&A disc whose payload is a tar of staged files; role \textit{data}.\\\hline
+  Disc plan&One disc's planned work: disk ID, role, group, slot and bucket.\\\hline
+  Disk ID&The catalog key of a disc, PREFIX:NNNN, printed on its cover.\\\hline
+  Dry run&A burn that copies the image to the dryrun share instead of writing media.\\\hline
+  Group&N consecutive data discs of one job plus their parity disc.\\\hline
+  Parity disc&A disc whose payload is the XOR of its group's data disc images; role \textit{parity}.\\\hline
+  Slot&A disc's position in its group: 0 to N−1 for data, N for parity.\\\hline
+  Spool&The working directory that holds a disc's tar, par2 set, TOC and ISO until it is done.\\\hline
+  Staging&The WebDAV folder where files wait to be archived.\\\hline
+  Write kind&How a media type is written: \textit{optical} by wodim, \textit{filesystem} by copy.\\\hline
+\end{nhgrid}
+
+\nhchapter[C]{CATALOG DATA DICTIONARY}
+
+\begin{nhpara}{C.1}{GENERAL.}
+Table C-1 lists every column of the catalog as created by \nowrap{internal/db/schema.sql}. Null means the column accepts NULL. The class diagram is figure 4-1.
+\end{nhpara}
+
+\begin{nhgrid}{C-1}{Catalog Columns}{|l|l|c|l|X|}{\multicolumn{1}{|c|}{Column}&\multicolumn{1}{c|}{Type}&Null&\multicolumn{1}{c|}{Default}&\multicolumn{1}{c|}{Notes}}
+  \multicolumn{5}{|l|}{\textit{media\_types}}\\\hline
+  name&varchar(30)&no&&Primary key\\\hline
+  capacity\_bytes&bigint&no&&C\\\hline
+  id\_prefix&text&no&'DISC'&BD and BDDL for the seeded types\\\hline
+  write\_kind&text&no&'optical'&optical or filesystem\\\hline
+  \multicolumn{5}{|l|}{\textit{disk\_groups}}\\\hline
+  id&uuid&no&gen\_random\_uuid()&Primary key\\\hline
+  burn\_job\_id&uuid&no&&Ties the groups of one job\\\hline
+  group\_size&int&no&&Data discs in this group\\\hline
+  created\_at&timestamp&yes&now&\\\hline
+  \multicolumn{5}{|l|}{\textit{disks}}\\\hline
+  id&varchar(50)&no&&Primary key, PREFIX:NNNN\\\hline
+  media\_type&varchar(30)&yes&&References media\_types(name)\\\hline
+  parity\_percent&smallint&no&&P of the burn\\\hline
+  group\_id&uuid&yes&&References disk\_groups(id)\\\hline
+  role&varchar(10)&no&'data'&data or parity\\\hline
+  slot\_index&smallint&yes&&Position in group\\\hline
+  iso\_hash&varchar(256)&yes&&SHA-256 of the image, hex\\\hline
+  is\_dry\_run&boolean&no&false&\\\hline
+  created\_at&timestamp&yes&now&\\\hline
+  \multicolumn{5}{|l|}{\textit{files}}\\\hline
+  id&uuid&no&gen\_random\_uuid()&Primary key\\\hline
+  disk\_id&varchar(50)&yes&&References disks(id)\\\hline
+  original\_path&text&no&&Staging-relative path; trigram GIN index\\\hline
+  size\_bytes&bigint&no&&\\\hline
+  file\_hash&varchar(256)&yes&&SHA-256 of the file, hex\\\hline
+  tags&text[]&no&'\{\}'&GIN index\\\hline
+  description&text&no&'{}'&\\\hline
+  archived\_at&timestamp&yes&now&\\\hline
+  \multicolumn{5}{|l|}{\textit{staged\_metadata}}\\\hline
+  path&text&no&&Primary key, staging-relative path\\\hline
+  tags&text[]&no&'\{\}'&\\\hline
+  description&text&no&'{}'&\\\hline
+  updated\_at&timestamp&yes&now&\\\hline
+\end{nhgrid}
+
+\nhchapter[D]{HTTP INTERFACE}
+
+\begin{nhpara}{D.1}{GENERAL.}
+Table D-1 lists every route registered in \nowrap{cmd/archive-core/main.go} and \nowrap{internal/web/server.go}. Routes that change state return an HTML fragment that HTMX swaps into the page.
+\end{nhpara}
+
+\begin{nhgrid}{D-1}{Routes}{|l|l|X|}{\multicolumn{1}{|c|}{Method}&\multicolumn{1}{c|}{Path}&\multicolumn{1}{c|}{Purpose}}
+  GET&/&Dashboard: staged files, burn form, job status\\\hline
+  POST&/staging/metadata&Apply tags and description to selected files or folders\\\hline
+  POST&/burn&Plan and start a burn job\\\hline
+  GET&/jobs&Job status fragment, polled every 2 s\\\hline
+  POST&/jobs/continue&Blank disc inserted; run the next disc plan\\\hline
+  POST&/jobs/retry&Return a failed job to AWAITING\_DISC\\\hline
+  GET&/library&Search page\\\hline
+  GET&/search?q=&Result rows, at most 50\\\hline
+  POST&/retrieve&Start a retrieval for one file\\\hline
+  POST&/retrieve/read&Read the named disc\\\hline
+  POST&/retrieve/reconstruct/start&Begin group reconstruction\\\hline
+  POST&/retrieve/reconstruct/read&Read one group member\\\hline
+  GET, POST&/config&List and add media types\\\hline
+  GET&/cover/\{diskID\}&Printable cover with a QR code for \nowrap{archive://disk/<id>}\\\hline
+  GET&/dryruns&List dry-run discs\\\hline
+  POST&/dryruns/delete&Delete a dry-run image and its catalog rows\\\hline
+  any&/webdav/&WebDAV root: staging, retrieved, dryrun\\\hline
+  GET&/healthz&Returns ``ok''\\\hline
+\end{nhgrid}
+
+\end{document}
